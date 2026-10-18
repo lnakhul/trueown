@@ -12,6 +12,8 @@ services:
       # Optional: set both (shell or .env) to use hosted Supabase Auth + anon-role inserts.
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       WATCHPACK_POLLING: "true"
     volumes:
       # Bind-mount source for hot reload; keep container-installed deps/build cache.

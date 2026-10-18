@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useCallback, useState } from "react";
+import TurnstileWidget from "@/components/TurnstileWidget";
 import { validate_evidence_url } from "@/lib/validation";
 import type { ApiErrorResponse } from "@/lib/types";
 
@@ -12,7 +13,13 @@ interface SubmissionPanelProps {
 /** Sliding crowdsourced-tip panel. Submit stays disabled until evidence_url is a valid domain. */
 export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelProps) {
   const [business_name, set_business_name] = useState("");
+  // Honeypot: hidden from people, filled in by naive bots.
+  const [honeypot, set_honeypot] = useState("");
   const [street_address, set_street_address] = useState("");
+  const turnstile_site_key = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() ?? "";
+  const [turnstile_token, set_turnstile_token] = useState<string | null>(null);
+  const [turnstile_reset_count, set_turnstile_reset_count] = useState(0);
+  const handle_turnstile_token = useCallback((token: string | null) => set_turnstile_token(token), []);
   const [evidence_url, set_evidence_url] = useState("");
   const [evidence_touched, set_evidence_touched] = useState(false);
   const [is_submitting, set_is_submitting] = useState(false);
@@ -28,6 +35,7 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
     business_name.trim().length > 0 &&
     street_address.trim().length > 0 &&
     evidence_validation.valid &&
+    (!turnstile_site_key || turnstile_token !== null) &&
     !is_submitting;
 
   async function handle_submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -45,6 +53,8 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
           business_name,
           street_address,
           evidence_url: evidence_validation.normalized_url,
+          website: honeypot,
+          turnstile_token,
         }),
       });
       if (!response.ok) {
@@ -65,6 +75,9 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
         text: caught_error instanceof Error ? caught_error.message : "Submission failed.",
       });
     } finally {
+      // Tokens are single-use: force a fresh challenge after every attempt.
+      set_turnstile_token(null);
+      set_turnstile_reset_count((count) => count + 1);
       set_is_submitting(false);
     }
   }
@@ -106,6 +119,18 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
             >
               ✕
             </button>
+          </div>
+
+          <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
+            <label>
+              Website
+              <input
+                tabIndex={-1}
+                autoComplete="off"
+                value={honeypot}
+                onChange={(event) => set_honeypot(event.target.value)}
+              />
+            </label>
           </div>
 
           <label className="block text-sm font-medium text-zinc-700">
@@ -153,6 +178,14 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
               {evidence_error}
             </span>
           </label>
+
+          {turnstile_site_key && is_open && (
+            <TurnstileWidget
+              site_key={turnstile_site_key}
+              reset_signal={turnstile_reset_count}
+              on_token={handle_turnstile_token}
+            />
+          )}
 
           {submit_message && (
             <p
