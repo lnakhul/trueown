@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "jest --runInBand",
     "db:import:boundaries": "tsx scripts/import-nta-boundaries.ts",
-    "db:import:venues": "tsx scripts/import-venues.ts"
+    "db:import:venues": "tsx scripts/import-venues.ts",
+    "db:import:brands": "tsx scripts/import-brands.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
