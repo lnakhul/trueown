@@ -1,0 +1,117 @@
+# TrueOwn
+
+**See who really owns your coffee shop, and find independent alternatives nearby.**
+
+TrueOwn maps private-equity and venture-backed coffee shops and bakeries in New York City. For each one it shows the ownership tier and points you to verified, independently owned shops within a five-minute walk (1,500 m).
+
+| Tier | Meaning | Example |
+|---|---|---|
+| 1 | Majority private-equity buyout or institutional control | Magnolia Bakery |
+| 2 | Venture or growth-equity financed | Blank Street Coffee, Maman |
+| 3 | True independent: local roaster or family-owned | Coffee Project NY |
+
+The schema is built to extend beyond coffee into restaurants, bars and retail, and beyond NYC into new cities.
+
+## Features
+
+- Proximity search with PostGIS `ST_DWithin` / `ST_Distance`, sorted nearest first
+- Browser geolocation (cached 15 minutes) with a neighborhood-search fallback and lookahead
+- Official NYC Neighborhood Tabulation Area (NTA 2020) polygons; centroids computed with `ST_Centroid`
+- Crowdsourced tip form with required evidence URL, Cloudflare Turnstile, honeypot and rate limiting
+- Admin vetting queue (Supabase Auth) to approve or reject tips
+- Row-level security on every table; provenance fields on brand ownership claims
+- Bulk CSV importers for brands, venues and neighborhood boundaries
+
+## Tech stack
+
+Next.js 14 (App Router) · TypeScript · Tailwind CSS · Supabase (PostgreSQL + PostGIS) · Leaflet · Jest · Docker
+
+## Quick start (Docker)
+
+Requires Docker with Compose.
+
+```bash
+git clone <your-repo-url> trueown && cd trueown
+cp .env.example .env.local        # fill in values; see Configuration
+docker compose up --build         # web on :3000, PostGIS on :5432
+```
+
+The first start creates the schema and seed data from `supabase/`. Then load boundaries and brands (run against the local database):
+
+```bash
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trueown
+npm install
+npm run db:import:boundaries
+npm run db:import:brands -- data/nyc/vetted_brands_data.csv
+```
+
+Open http://localhost:3000. To reset the local database: `docker compose down -v`.
+
+## Configuration
+
+Copy [.env.example](.env.example) to `.env.local`. Never commit real values.
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Server-only Postgres connection string (for hosted Supabase use the session pooler) |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public Supabase values, protected by RLS |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile; the secret is server-only |
+| `ADMIN_PASSWORD` | HTTP Basic fallback for `/admin` when Supabase is not configured |
+
+Never put the Supabase service-role key in client code.
+
+## Database
+
+Migrations live in `supabase/migrations/` and run in filename order; `supabase/seed.sql` holds sample data. On hosted Supabase, paste each file's **contents** into the SQL Editor, in order. Create an admin user in Supabase Auth and mark it as an admin as described in the RLS migration.
+
+## Importing data
+
+All importers support `--dry-run` (validate and roll back) and require `--yes` for non-local databases. They are all-or-nothing.
+
+```bash
+npm run db:import:boundaries                       # NYC NTA 2020 polygons (--download to refresh)
+npm run db:import:brands -- <brands.csv>           # brand-level rows
+npm run db:import:venues -- <venues.csv>           # brands + storefronts with provenance
+```
+
+The venue template and field guide are in [data/templates/](data/templates). Each brand needs an ownership source type, public URL and verification date.
+
+## Testing
+
+```bash
+docker compose up -d db
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trueown npm test
+npm run typecheck
+```
+
+CI runs the same checks (see [.github/workflows/ci.yml](.github/workflows/ci.yml)).
+
+## Project structure
+
+```
+app/            Routes, API handlers (proximity, submissions, admin), admin UI
+components/     Discovery dashboard, submission panel, Turnstile widget
+lib/            DB helpers, Supabase clients, rate limiting, importers
+scripts/        Import CLIs
+supabase/       Migrations and seed data
+data/           NTA boundaries and CSV templates
+__tests__/      Geospatial, RLS and importer tests
+```
+
+## Security
+
+Security headers, RLS, server-side Turnstile verification, rate limiting and parameterized SQL are on by default. Please report vulnerabilities privately to the maintainers rather than opening a public issue.
+
+## Data sources and accuracy
+
+Ownership claims are hand-curated and cited: Tier 1/2 from SEC EDGAR, investor press releases and business-intelligence platforms; Tier 3 from NYS Division of Corporations, Eater NY and community consensus. Ownership changes; if something is wrong, submit a tip with evidence. Neighborhood boundaries come from NYC Open Data (Department of City Planning, NTA 2020).
+
+## Contributing
+
+Issues and pull requests are welcome. Run `npm run typecheck` and `npm test` first. By contributing you agree your work is licensed under AGPL-3.0.
+
+## License
+
+Copyright (C) 2026 TrueOwn Development Group.
+
+Licensed under the [GNU Affero General Public License v3.0](LICENSE). If you run a modified version as a network service, you must offer its source code to that service's users.
