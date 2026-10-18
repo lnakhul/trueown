@@ -37,6 +37,8 @@ jobs:
           for file in supabase/migrations/*.sql supabase/seed.sql; do
             psql -h localhost -U postgres -d trueown -v ON_ERROR_STOP=1 -f "$file"
           done
+      - name: Load neighborhood boundaries (committed NTA 2020 file, no network)
+        run: npm run db:import:boundaries
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

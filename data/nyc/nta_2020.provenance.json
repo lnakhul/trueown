@@ -1,0 +1,10 @@
+{
+  "dataset": "2020 Neighborhood Tabulation Areas (NTAs)",
+  "publisher": "Department of City Planning (DCP) via NYC Open Data",
+  "dataset_id": "9nt8-h7nd",
+  "source_url": "https://data.cityofnewyork.us/resource/9nt8-h7nd.geojson?$limit=500",
+  "retrieved_at": "2026-10-18T07:39:46.910Z",
+  "feature_count": 262,
+  "sha256": "02bc553e48f534f264d95703a71dec3251b9ec3b070e9b67dfed7def0ab1ad88",
+  "normalization": "properties trimmed to nta2020/ntaname/boroname/ntatype; coordinates rounded to 6 decimals"
+}

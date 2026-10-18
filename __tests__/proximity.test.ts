@@ -1,3 +1,4 @@
+import { ensure_boundaries_loaded } from "@/lib/import/nta-file";
 import { Pool } from "pg";
 import { NextRequest } from "next/server";
 import { GET as proximity_handler } from "@/app/api/proximity/route";
@@ -24,10 +25,11 @@ const BLANK_STREET_ADDRESS = "186 W 4th St";
 
 let test_pool: Pool;
 
-beforeAll(() => {
+beforeAll(async () => {
   // The route handler resolves its own pool from DATABASE_URL; keep both on the same database.
   process.env.DATABASE_URL = database_url;
   test_pool = new Pool({ connectionString: database_url, max: 2 });
+  await ensure_boundaries_loaded(test_pool);
 });
 
 afterAll(async () => {
@@ -243,12 +245,15 @@ describe("neighborhood text fallback: centroid origin + 1500m search", () => {
   });
 
   test("lookahead suggests by prefix and treats LIKE wildcards literally", async () => {
-    expect(await fetch_neighborhood_suggestions("wes", test_pool)).toEqual(["West Village"]);
+    const west = await fetch_neighborhood_suggestions("wes", test_pool);
+    expect(west[0]).toBe("West Village");
+    expect(west.length).toBeLessThanOrEqual(8);
     expect(await fetch_neighborhood_suggestions("%", test_pool)).toEqual([]);
 
     const response = await call_proximity("?suggest=gre");
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ suggestions: ["Greenwich Village"] });
+    const { suggestions } = (await response.json()) as { suggestions: string[] };
+    expect(suggestions[0]).toBe("Greenwich Village");
     expect((await call_proximity("?suggest=%20")).status).toBe(400);
   });
 });
