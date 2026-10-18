@@ -1,0 +1,41 @@
+services:
+  web:
+    build:
+      context: .
+      target: dev
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/trueown
+      WATCHPACK_POLLING: "true"
+    volumes:
+      # Bind-mount source for hot reload; keep container-installed deps/build cache.
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgis/postgis:16-3.4
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: trueown
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Scripts run once on first init, in lexical order: migration, then seed.
+      - ./supabase/migrations/20261017000000_init_core_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./supabase/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d trueown"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  db_data:
