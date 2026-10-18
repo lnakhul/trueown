@@ -32,7 +32,8 @@ services:
       # Scripts run once on first init, in lexical order: migration, then seed.
       - ./supabase/migrations/20261017000000_init_core_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./supabase/migrations/20261018000000_admin_vetting.sql:/docker-entrypoint-initdb.d/02_admin_vetting.sql:ro
-      - ./supabase/seed.sql:/docker-entrypoint-initdb.d/03_seed.sql:ro
+      - ./supabase/migrations/20261019000000_02_rls_policies.sql:/docker-entrypoint-initdb.d/03_rls_policies.sql:ro
+      - ./supabase/seed.sql:/docker-entrypoint-initdb.d/04_seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d trueown"]
       interval: 5s

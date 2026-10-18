@@ -1,13 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { FormEvent, useEffect, useState } from "react";
-import { validate_evidence_url } from "@/lib/validation";
+import { useCallback, useEffect, useState } from "react";
+import SubmissionPanel from "@/components/SubmissionPanel";
 import type {
   AlternativeRecommendation,
   ApiErrorResponse,
-  ProximityResponse,
-  SelectedLocation,
+  NearbyCorporateResult,
+  NearbyResponse,
+  NeighborhoodsResponse,
 } from "@/lib/types";
 
 /** Leaflet touches `window`, so the map must render client-side only. */
@@ -16,18 +17,24 @@ const IndependentMap = dynamic(() => import("./IndependentMap"), {
   loading: () => <div className="h-56 w-full animate-pulse rounded-xl bg-zinc-200 sm:h-72" />,
 });
 
-export interface DiscoveryDashboardProps {
-  selected_location: SelectedLocation;
-}
+/** locating: awaiting permission | located: using GPS | fallback: neighborhood menu. */
+type DiscoveryMode = "locating" | "located" | "fallback";
 
 type FetchState =
+  | { status: "idle" }
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "success"; payload: ProximityResponse };
+  | { status: "success"; payload: NearbyResponse };
 
 const TIER_ALERT_LABEL: Record<1 | 2, string> = {
   1: "Private Equity Owned",
   2: "Venture Capital Funded",
+};
+
+const GEOLOCATION_OPTIONS: PositionOptions = {
+  enableHighAccuracy: false,
+  timeout: 10_000,
+  maximumAge: 60_000,
 };
 
 /** Explicit icon placeholder for the Navigate action. */
@@ -53,282 +60,68 @@ function build_directions_url(alternative: AlternativeRecommendation): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${alternative.latitude},${alternative.longitude}&travelmode=walking`;
 }
 
-/* ------------------------------------------------------------------------- */
-/* Crowdsourced submission panel                                              */
-/* ------------------------------------------------------------------------- */
-
-interface SubmissionPanelProps {
-  is_open: boolean;
-  on_close: () => void;
-}
-
-function SubmissionPanel({ is_open, on_close }: SubmissionPanelProps) {
-  const [business_name, set_business_name] = useState("");
-  const [street_address, set_street_address] = useState("");
-  const [evidence_url, set_evidence_url] = useState("");
-  const [evidence_touched, set_evidence_touched] = useState(false);
-  const [is_submitting, set_is_submitting] = useState(false);
-  const [submit_message, set_submit_message] = useState<
-    { kind: "success" | "error"; text: string } | null
-  >(null);
-
-  const evidence_validation = validate_evidence_url(evidence_url);
-  const evidence_error =
-    evidence_touched && !evidence_validation.valid ? evidence_validation.reason : null;
-  // Hard block: submit stays disabled until all fields are populated and the URL is valid.
-  const can_submit =
-    business_name.trim().length > 0 &&
-    street_address.trim().length > 0 &&
-    evidence_validation.valid &&
-    !is_submitting;
-
-  async function handle_submit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    set_evidence_touched(true);
-    if (!can_submit || !evidence_validation.valid) return;
-
-    set_is_submitting(true);
-    set_submit_message(null);
-    try {
-      const response = await fetch("/api/submissions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          business_name,
-          street_address,
-          evidence_url: evidence_validation.normalized_url,
-        }),
-      });
-      if (!response.ok) {
-        const failure = (await response.json().catch(() => null)) as ApiErrorResponse | null;
-        throw new Error(failure?.error ?? "Submission failed. Please try again.");
-      }
-      set_submit_message({
-        kind: "success",
-        text: "Thanks! Your tip is pending review and will not appear until verified.",
-      });
-      set_business_name("");
-      set_street_address("");
-      set_evidence_url("");
-      set_evidence_touched(false);
-    } catch (caught_error) {
-      set_submit_message({
-        kind: "error",
-        text: caught_error instanceof Error ? caught_error.message : "Submission failed.",
-      });
-    } finally {
-      set_is_submitting(false);
-    }
+/** Maps a GeolocationPositionError to a user-facing fallback explanation. */
+function describe_geolocation_failure(error: GeolocationPositionError): string {
+  switch (error.code) {
+    case error.PERMISSION_DENIED:
+      return "Location access was denied. Choose a neighborhood instead.";
+    case error.TIMEOUT:
+      return "We couldn't get your location in time. Choose a neighborhood instead.";
+    default:
+      return "Your location is unavailable right now. Choose a neighborhood instead.";
   }
+}
 
-  const input_classes =
-    "w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-base text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-zinc-900";
-
-  return (
-    <>
-      {is_open && (
-        <div
-          className="fixed inset-0 z-40 bg-zinc-900/40"
-          onClick={on_close}
-          aria-hidden="true"
-        />
-      )}
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-label="Submit an ownership tip"
-        aria-hidden={!is_open}
-        className={`fixed inset-y-0 right-0 z-50 w-full max-w-md overflow-y-auto bg-white shadow-2xl transition-transform duration-300 ${
-          is_open ? "translate-x-0" : "translate-x-full"
-        }`}
-      >
-        <form onSubmit={handle_submit} noValidate className="flex min-h-full flex-col gap-5 p-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-zinc-900">Submit an ownership tip</h2>
-              <p className="mt-1 text-sm text-zinc-500">
-                Tips are reviewed by an admin before going live. A public source is required.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={on_close}
-              className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-              aria-label="Close panel"
-            >
-              ✕
-            </button>
-          </div>
-
-          <label className="block text-sm font-medium text-zinc-700">
-            Business name
-            <input
-              className={`${input_classes} mt-1`}
-              value={business_name}
-              onChange={(event) => set_business_name(event.target.value)}
-              placeholder="e.g. Blank Street Coffee"
-              maxLength={200}
-              required
-              disabled={!is_open}
-            />
-          </label>
-
-          <label className="block text-sm font-medium text-zinc-700">
-            Street address
-            <input
-              className={`${input_classes} mt-1`}
-              value={street_address}
-              onChange={(event) => set_street_address(event.target.value)}
-              placeholder="e.g. 284 Lafayette St, New York"
-              maxLength={300}
-              required
-              disabled={!is_open}
-            />
-          </label>
-
-          <label className="block text-sm font-medium text-zinc-700">
-            Evidence URL (SEC filing, press release, or news article)
-            <input
-              className={`${input_classes} mt-1 ${evidence_error ? "border-red-500 focus:border-red-600" : ""}`}
-              type="url"
-              inputMode="url"
-              value={evidence_url}
-              onChange={(event) => set_evidence_url(event.target.value)}
-              onBlur={() => set_evidence_touched(true)}
-              placeholder="https://example.com/press-release"
-              aria-invalid={evidence_error !== null}
-              aria-describedby="evidence-url-error"
-              required
-              disabled={!is_open}
-            />
-            <span id="evidence-url-error" role="alert" className="mt-1 block min-h-5 text-sm text-red-600">
-              {evidence_error}
-            </span>
-          </label>
-
-          {submit_message && (
-            <p
-              role="status"
-              className={`rounded-xl px-4 py-3 text-sm ${
-                submit_message.kind === "success"
-                  ? "bg-emerald-500/10 text-emerald-700"
-                  : "bg-red-500/10 text-red-700"
-              }`}
-            >
-              {submit_message.text}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={!can_submit}
-            className={`mt-auto w-full rounded-xl px-4 py-3 text-base font-semibold text-white transition-colors ${
-              is_submitting
-                ? "cursor-wait bg-amber-500"
-                : can_submit
-                  ? "bg-zinc-900 hover:bg-zinc-700"
-                  : "cursor-not-allowed bg-zinc-300"
-            }`}
-          >
-            {is_submitting ? "Verifying link & submitting…" : "Submit for review"}
-          </button>
-        </form>
-      </aside>
-    </>
-  );
+async function read_error_message(response: Response): Promise<string> {
+  const failure = (await response.json().catch(() => null)) as ApiErrorResponse | null;
+  return failure?.error ?? `Request failed (${response.status}).`;
 }
 
 /* ------------------------------------------------------------------------- */
-/* Dashboard                                                                  */
+/* Corporate profile + independent slider for one selected result             */
 /* ------------------------------------------------------------------------- */
 
-export default function DiscoveryDashboard({ selected_location }: DiscoveryDashboardProps) {
-  const [fetch_state, set_fetch_state] = useState<FetchState>({ status: "loading" });
-  const [is_panel_open, set_is_panel_open] = useState(false);
-
-  const { latitude, longitude } = selected_location;
-
-  // Fetch independent alternatives whenever the selected corporate location changes.
-  useEffect(() => {
-    const abort_controller = new AbortController();
-    set_fetch_state({ status: "loading" });
-
-    async function fetch_nearby_independent_alternatives(): Promise<void> {
-      try {
-        const response = await fetch(`/api/proximity?lat=${latitude}&lng=${longitude}`, {
-          signal: abort_controller.signal,
-        });
-        if (!response.ok) {
-          const failure = (await response.json().catch(() => null)) as ApiErrorResponse | null;
-          throw new Error(failure?.error ?? `Request failed (${response.status}).`);
-        }
-        const payload = (await response.json()) as ProximityResponse;
-        set_fetch_state({ status: "success", payload });
-      } catch (caught_error) {
-        if (abort_controller.signal.aborted) return;
-        set_fetch_state({
-          status: "error",
-          message:
-            caught_error instanceof Error ? caught_error.message : "Unable to load alternatives.",
-        });
-      }
-    }
-
-    void fetch_nearby_independent_alternatives();
-    return () => abort_controller.abort();
-  }, [latitude, longitude]);
-
-  const alternatives =
-    fetch_state.status === "success" ? fetch_state.payload.alternatives : [];
+function CorporateResultView({ result }: { result: NearbyCorporateResult }) {
+  const { target, alternatives } = result;
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-8 px-4 py-6 sm:px-6">
-      {/* 1. Selection view: corporate profile + alert banner */}
+    <div className="space-y-8">
+      {/* Selection view: corporate profile + alert banner */}
       <section className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 text-zinc-50 shadow-lg">
-        <div
-          role="alert"
-          className="flex items-center gap-3 bg-amber-500/10 px-5 py-3 text-amber-500"
-        >
+        <div role="alert" className="flex items-center gap-3 bg-amber-500/10 px-5 py-3 text-amber-500">
           <AlertIcon />
           <p className="text-sm font-semibold uppercase tracking-wide">
-            {TIER_ALERT_LABEL[selected_location.corporate_tier]}
+            {TIER_ALERT_LABEL[target.corporate_tier]}
           </p>
         </div>
         <div className="space-y-1 px-5 py-5">
-          <h1 className="text-2xl font-bold">{selected_location.brand_name}</h1>
-          <p className="text-sm text-zinc-400">{selected_location.address}</p>
+          <h2 className="text-2xl font-bold">{target.brand_name}</h2>
+          <p className="text-sm text-zinc-400">
+            {[target.address, target.neighborhood].filter(Boolean).join(" · ")}
+          </p>
+          {target.distance_meters !== null && (
+            <p className="text-sm text-zinc-400">{target.distance_meters}m from you</p>
+          )}
           <p className="pt-2 text-sm text-zinc-300">
-            Ownership: <span className="font-medium">{selected_location.parent_entity}</span>{" "}
-            <span className="text-zinc-500">(Tier {selected_location.corporate_tier})</span>
+            Ownership: <span className="font-medium">{target.parent_entity}</span>{" "}
+            <span className="text-zinc-500">(Tier {target.corporate_tier})</span>
           </p>
         </div>
       </section>
 
-      <IndependentMap target={selected_location} alternatives={alternatives} />
+      <IndependentMap target={target} alternatives={alternatives} />
 
-      {/* 2. Independent recommendation slider */}
+      {/* Independent recommendation slider */}
       <section aria-labelledby="alternatives-heading" className="space-y-4">
-        <h2 id="alternatives-heading" className="text-xl font-extrabold text-zinc-900 sm:text-2xl">
+        <h3 id="alternatives-heading" className="text-xl font-extrabold text-zinc-900 sm:text-2xl">
           Keep it local instead? Here are independent alternatives within a 5-minute walk.
-        </h2>
+        </h3>
 
-        {fetch_state.status === "loading" && (
-          <p className="text-sm text-zinc-500" aria-live="polite">
-            Finding independent alternatives…
-          </p>
-        )}
-        {fetch_state.status === "error" && (
-          <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-700">
-            {fetch_state.message}
-          </p>
-        )}
-        {fetch_state.status === "success" && alternatives.length === 0 && (
+        {alternatives.length === 0 ? (
           <p className="text-sm text-zinc-500">
             No verified independent alternatives nearby yet. Know one? Submit a tip below.
           </p>
-        )}
-
-        {alternatives.length > 0 && (
+        ) : (
           <ul className="-mx-4 flex snap-x snap-mandatory space-x-4 overflow-x-auto px-4 pb-4 sm:mx-0 sm:px-0">
             {alternatives.map((alternative) => (
               <li
@@ -337,7 +130,7 @@ export default function DiscoveryDashboard({ selected_location }: DiscoveryDashb
               >
                 <div className="space-y-2">
                   <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-bold text-zinc-900">{alternative.brand_name}</h3>
+                    <h4 className="font-bold text-zinc-900">{alternative.brand_name}</h4>
                     <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600">
                       {alternative.distance_meters}m away
                     </span>
@@ -363,8 +156,238 @@ export default function DiscoveryDashboard({ selected_location }: DiscoveryDashb
           </ul>
         )}
       </section>
+    </div>
+  );
+}
 
-      {/* 3. Crowdsourced pipeline */}
+/* ------------------------------------------------------------------------- */
+/* Dashboard                                                                  */
+/* ------------------------------------------------------------------------- */
+
+export default function DiscoveryDashboard() {
+  const [mode, set_mode] = useState<DiscoveryMode>("locating");
+  const [fallback_notice, set_fallback_notice] = useState<string | null>(null);
+  const [request_url, set_request_url] = useState<string | null>(null);
+  const [fetch_state, set_fetch_state] = useState<FetchState>({ status: "idle" });
+  const [selected_index, set_selected_index] = useState(0);
+  const [neighborhoods, set_neighborhoods] = useState<string[]>([]);
+  const [neighborhoods_error, set_neighborhoods_error] = useState<string | null>(null);
+  const [active_neighborhood, set_active_neighborhood] = useState<string | null>(null);
+  const [is_panel_open, set_is_panel_open] = useState(false);
+
+  const enter_fallback = useCallback((notice: string | null) => {
+    set_mode("fallback");
+    set_fallback_notice(notice);
+    set_request_url(null);
+    set_fetch_state({ status: "idle" });
+    set_active_neighborhood(null);
+  }, []);
+
+  const request_device_location = useCallback(() => {
+    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
+      enter_fallback("Location isn't supported on this device. Choose a neighborhood instead.");
+      return;
+    }
+    set_mode("locating");
+    set_fallback_notice(null);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        // ~11m precision is plenty for discovery and limits what we transmit.
+        const latitude = position.coords.latitude.toFixed(4);
+        const longitude = position.coords.longitude.toFixed(4);
+        set_mode("located");
+        set_active_neighborhood(null);
+        set_request_url(`/api/proximity?scope=nearest&lat=${latitude}&lng=${longitude}`);
+      },
+      (geolocation_error) => enter_fallback(describe_geolocation_failure(geolocation_error)),
+      GEOLOCATION_OPTIONS,
+    );
+  }, [enter_fallback]);
+
+  // Ask for the device location once on first load.
+  useEffect(() => {
+    request_device_location();
+  }, [request_device_location]);
+
+  // Load neighborhood options for the fallback menu.
+  useEffect(() => {
+    const abort_controller = new AbortController();
+    async function fetch_neighborhood_options(): Promise<void> {
+      try {
+        const response = await fetch("/api/neighborhoods", { signal: abort_controller.signal });
+        if (!response.ok) throw new Error(await read_error_message(response));
+        const payload = (await response.json()) as NeighborhoodsResponse;
+        set_neighborhoods(payload.neighborhoods);
+      } catch (caught_error) {
+        if (abort_controller.signal.aborted) return;
+        set_neighborhoods_error(
+          caught_error instanceof Error ? caught_error.message : "Unable to load neighborhoods.",
+        );
+      }
+    }
+    void fetch_neighborhood_options();
+    return () => abort_controller.abort();
+  }, []);
+
+  // Fetch discovery results whenever the request URL changes.
+  useEffect(() => {
+    if (request_url === null) return;
+    const abort_controller = new AbortController();
+    set_fetch_state({ status: "loading" });
+
+    async function fetch_discovery_results(url: string): Promise<void> {
+      try {
+        const response = await fetch(url, { signal: abort_controller.signal });
+        if (!response.ok) throw new Error(await read_error_message(response));
+        const payload = (await response.json()) as NearbyResponse;
+        set_selected_index(0);
+        set_fetch_state({ status: "success", payload });
+      } catch (caught_error) {
+        if (abort_controller.signal.aborted) return;
+        set_fetch_state({
+          status: "error",
+          message: caught_error instanceof Error ? caught_error.message : "Unable to load results.",
+        });
+      }
+    }
+
+    void fetch_discovery_results(request_url);
+    return () => abort_controller.abort();
+  }, [request_url]);
+
+  function select_neighborhood(neighborhood: string): void {
+    set_active_neighborhood(neighborhood);
+    set_request_url(`/api/proximity?neighborhood=${encodeURIComponent(neighborhood)}`);
+  }
+
+  const results = fetch_state.status === "success" ? fetch_state.payload.results : [];
+  const selected_result = results[selected_index] ?? results[0];
+
+  return (
+    <div className="mx-auto w-full max-w-3xl space-y-8 px-4 py-6 sm:px-6">
+      <header className="space-y-1">
+        <h1 className="text-3xl font-extrabold text-zinc-900">TrueOwn</h1>
+        <p className="text-sm text-zinc-500">
+          See who really owns the shops around you — and keep it local.
+        </p>
+      </header>
+
+      {mode === "locating" && (
+        <p
+          className="animate-pulse rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-600"
+          aria-live="polite"
+        >
+          Finding corporate-backed spots near you… Please allow location access.
+        </p>
+      )}
+
+      {mode === "located" && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-zinc-500">
+          <span>Showing results near your current location.</span>
+          <button
+            type="button"
+            onClick={() => enter_fallback(null)}
+            className="font-semibold text-zinc-900 underline underline-offset-2"
+          >
+            Browse by neighborhood instead
+          </button>
+        </div>
+      )}
+
+      {/* Search by Neighborhood fallback */}
+      {mode === "fallback" && (
+        <section
+          aria-labelledby="neighborhood-heading"
+          className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm"
+        >
+          <div>
+            <h2 id="neighborhood-heading" className="text-lg font-bold text-zinc-900">
+              Search by Neighborhood
+            </h2>
+            {fallback_notice && (
+              <p role="status" className="mt-1 text-sm text-zinc-500">
+                {fallback_notice}
+              </p>
+            )}
+          </div>
+
+          {neighborhoods_error && (
+            <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700">
+              {neighborhoods_error}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {neighborhoods.map((neighborhood) => (
+              <button
+                key={neighborhood}
+                type="button"
+                onClick={() => select_neighborhood(neighborhood)}
+                aria-pressed={active_neighborhood === neighborhood}
+                className={`rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                  active_neighborhood === neighborhood
+                    ? "border-zinc-900 bg-zinc-900 text-white"
+                    : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-900"
+                }`}
+              >
+                {neighborhood}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={request_device_location}
+            className="text-sm font-semibold text-zinc-900 underline underline-offset-2"
+          >
+            Try my location again
+          </button>
+        </section>
+      )}
+
+      {fetch_state.status === "loading" && (
+        <p className="text-sm text-zinc-500" aria-live="polite">
+          Finding independent alternatives…
+        </p>
+      )}
+      {fetch_state.status === "error" && (
+        <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-700">
+          {fetch_state.message}
+        </p>
+      )}
+
+      {fetch_state.status === "success" && results.length === 0 && (
+        <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500">
+          {fetch_state.payload.origin.kind === "neighborhood"
+            ? `No tracked Tier 1 or Tier 2 brands in ${fetch_state.payload.origin.neighborhood} yet.`
+            : "No tracked corporate-backed brands near you yet. Try a neighborhood instead."}
+        </p>
+      )}
+
+      {results.length > 1 && (
+        <nav aria-label="Nearby corporate locations" className="-mx-4 flex space-x-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
+          {results.map((result, index) => (
+            <button
+              key={result.target.location_id}
+              type="button"
+              onClick={() => set_selected_index(index)}
+              aria-current={index === selected_index}
+              className={`shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                index === selected_index
+                  ? "border-zinc-900 bg-zinc-900 text-white"
+                  : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-900"
+              }`}
+            >
+              {result.target.brand_name}
+              {result.target.distance_meters !== null && ` · ${result.target.distance_meters}m`}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {selected_result && <CorporateResultView key={selected_result.target.location_id} result={selected_result} />}
+
+      {/* Crowdsourced pipeline */}
       <section className="flex justify-center border-t border-zinc-200 pt-6">
         <button
           type="button"

@@ -1,10 +1,19 @@
-import type { Pool } from "pg";
+import type { Pool as PgPool } from "pg";
 import { get_database_pool } from "@/lib/db/pool";
 import type {
   AlternativeRecommendation,
+  CorporateTarget,
   CorporateTier,
   IndustryVertical,
+  NearbyCorporateResult,
 } from "@/lib/types";
+
+/** Anything that can run a query: a Pool, or a PoolClient (e.g. inside a role-scoped transaction). */
+type Pool = Pick<PgPool, "query">;
+
+/** How far from the user we look for the closest corporate storefronts. */
+export const NEARBY_CORPORATE_RADIUS_METERS = 5000;
+export const MAX_NEARBY_CORPORATE_RESULTS = 5;
 
 /** Alternatives are only returned within this radius (meters). */
 export const SEARCH_RADIUS_METERS = 1500;
@@ -204,4 +213,111 @@ export async function fetch_alternatives_for_corporate_address(
     pool,
   );
   return { target, alternatives };
+}
+
+interface CorporateCandidate {
+  record: CorporateLocationRecord;
+  distance_meters: number | null;
+}
+
+function to_corporate_target(candidate: CorporateCandidate): CorporateTarget {
+  const { record } = candidate;
+  return {
+    location_id: record.location_id,
+    brand_name: record.brand_name,
+    corporate_tier: record.corporate_tier,
+    parent_entity: record.parent_entity,
+    address: record.address,
+    neighborhood: record.neighborhood,
+    latitude: record.latitude,
+    longitude: record.longitude,
+    distance_meters: candidate.distance_meters,
+  };
+}
+
+/** Pairs each corporate storefront with its own independents (each <= 1500m away). */
+async function attach_independent_alternatives(
+  candidates: CorporateCandidate[],
+  pool: Pool,
+): Promise<NearbyCorporateResult[]> {
+  const results: NearbyCorporateResult[] = [];
+  // Sequential: callers may pass a single PoolClient, which cannot run queries concurrently.
+  for (const candidate of candidates) {
+    results.push({
+      target: to_corporate_target(candidate),
+      alternatives: await fetch_nearby_independent_alternatives(
+        candidate.record.latitude,
+        candidate.record.longitude,
+        candidate.record.industry_vertical,
+        pool,
+      ),
+    });
+  }
+  return results;
+}
+
+/**
+ * Closest Tier 1/2 storefronts to the user's physical position (nearest first),
+ * each with its Tier 3 alternatives.
+ */
+export async function fetch_nearest_corporate_discovery(
+  latitude: number,
+  longitude: number,
+  pool: Pool = get_database_pool(),
+): Promise<NearbyCorporateResult[]> {
+  const result = await pool.query<CorporateLocationRow & { distance_meters: number }>(
+    `SELECT ${CORPORATE_LOCATION_COLUMNS},
+            ST_Distance(
+              l.coordinates::geography,
+              ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography) AS distance_meters
+       FROM locations l
+       JOIN brands b ON b.id = l.brand_id
+      WHERE b.corporate_tier IN (1, 2)
+        AND ST_DWithin(
+              l.coordinates::geography,
+              ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
+              $3)
+      ORDER BY distance_meters ASC
+      LIMIT $4`,
+    [latitude, longitude, NEARBY_CORPORATE_RADIUS_METERS, MAX_NEARBY_CORPORATE_RESULTS],
+  );
+  return attach_independent_alternatives(
+    result.rows.map((row) => ({
+      record: to_corporate_record(row),
+      distance_meters: Math.round(Number(row.distance_meters)),
+    })),
+    pool,
+  );
+}
+
+/** Tier 1/2 storefronts in a named neighborhood (case-insensitive exact match). */
+export async function fetch_neighborhood_corporate_discovery(
+  neighborhood: string,
+  pool: Pool = get_database_pool(),
+): Promise<NearbyCorporateResult[]> {
+  const result = await pool.query<CorporateLocationRow>(
+    `SELECT ${CORPORATE_LOCATION_COLUMNS}
+       FROM locations l
+       JOIN brands b ON b.id = l.brand_id
+      WHERE b.corporate_tier IN (1, 2)
+        AND lower(l.neighborhood) = lower($1)
+      ORDER BY b.name, l.address
+      LIMIT $2`,
+    [neighborhood, MAX_NEARBY_CORPORATE_RESULTS],
+  );
+  return attach_independent_alternatives(
+    result.rows.map((row) => ({ record: to_corporate_record(row), distance_meters: null })),
+    pool,
+  );
+}
+
+/** Distinct neighborhoods with at least one tracked storefront, for the fallback menu. */
+export async function fetch_neighborhoods(pool: Pool = get_database_pool()): Promise<string[]> {
+  const result = await pool.query<{ neighborhood: string }>(
+    `SELECT DISTINCT neighborhood
+       FROM locations
+      WHERE neighborhood IS NOT NULL
+      ORDER BY neighborhood`,
+  );
+  return result.rows.map((row) => row.neighborhood);
 }

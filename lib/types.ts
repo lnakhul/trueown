@@ -22,6 +22,14 @@ export interface SelectedLocation {
   longitude: number;
 }
 
+/** A corporate storefront surfaced by location or neighborhood discovery. */
+export interface CorporateTarget extends SelectedLocation {
+  location_id: string;
+  neighborhood: string | null;
+  /** Straight-line meters from the user; null for neighborhood browsing. */
+  distance_meters: number | null;
+}
+
 /** A single independent (Tier 3) recommendation returned by the proximity API. */
 export interface AlternativeRecommendation {
   location_id: string;
@@ -40,6 +48,24 @@ export interface ProximityResponse {
   industry_vertical: IndustryVertical;
   radius_meters: number;
   alternatives: AlternativeRecommendation[];
+}
+
+export interface NearbyCorporateResult {
+  target: CorporateTarget;
+  alternatives: AlternativeRecommendation[];
+}
+
+/** Response for `scope=nearest` (user coordinates) and `neighborhood=` lookups. */
+export interface NearbyResponse {
+  origin:
+    | { kind: "coordinates"; latitude: number; longitude: number }
+    | { kind: "neighborhood"; neighborhood: string };
+  radius_meters: number;
+  results: NearbyCorporateResult[];
+}
+
+export interface NeighborhoodsResponse {
+  neighborhoods: string[];
 }
 
 export interface ApiErrorResponse {
