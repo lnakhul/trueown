@@ -321,3 +321,91 @@ export async function fetch_neighborhoods(pool: Pool = get_database_pool()): Pro
   );
   return result.rows.map((row) => row.neighborhood);
 }
+
+/** Neighborhood search has no brand context, so it defaults to the launch vertical. */
+export const DEFAULT_INDUSTRY_VERTICAL: IndustryVertical = "coffee_bakery";
+export const MAX_NEIGHBORHOOD_SUGGESTIONS = 8;
+
+export interface NeighborhoodCentroid {
+  neighborhood: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface NeighborhoodDiscovery {
+  centroid: NeighborhoodCentroid;
+  results: NearbyCorporateResult[];
+  origin_alternatives: MappedAlternative[];
+}
+
+/**
+ * Geographic centroid of every tracked storefront in a neighborhood
+ * (case-insensitive exact name match). There is no boundary-polygon table yet,
+ * so the centroid is derived from the stored location points.
+ * Returns null when the neighborhood is unknown.
+ */
+export async function fetch_neighborhood_centroid(
+  neighborhood: string,
+  pool: Pool = get_database_pool(),
+): Promise<NeighborhoodCentroid | null> {
+  const result = await pool.query<{
+    neighborhood: string;
+    latitude: number | null;
+    longitude: number | null;
+  }>(
+    `SELECT min(l.neighborhood) AS neighborhood,
+            ST_Y(ST_Centroid(ST_Collect(l.coordinates))) AS latitude,
+            ST_X(ST_Centroid(ST_Collect(l.coordinates))) AS longitude
+       FROM locations l
+      WHERE lower(l.neighborhood) = lower($1)`,
+    [neighborhood],
+  );
+  const row = result.rows[0];
+  if (!row || row.latitude === null || row.longitude === null) return null;
+  return {
+    neighborhood: row.neighborhood,
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+  };
+}
+
+/**
+ * Text-search entry point: resolve the neighborhood's centroid, then run the
+ * standard 1500m Tier 3 proximity query from that point of origin.
+ */
+export async function fetch_neighborhood_discovery(
+  neighborhood: string,
+  pool: Pool = get_database_pool(),
+): Promise<NeighborhoodDiscovery | null> {
+  const centroid = await fetch_neighborhood_centroid(neighborhood, pool);
+  if (!centroid) return null;
+
+  const origin_alternatives = await fetch_nearby_independent_alternatives(
+    centroid.latitude,
+    centroid.longitude,
+    DEFAULT_INDUSTRY_VERTICAL,
+    pool,
+  );
+  const results = await fetch_neighborhood_corporate_discovery(centroid.neighborhood, pool);
+  return { centroid, results, origin_alternatives };
+}
+
+/** Prefix lookahead over neighborhood names; LIKE wildcards in input are escaped. */
+export async function fetch_neighborhood_suggestions(
+  prefix: string,
+  pool: Pool = get_database_pool(),
+): Promise<string[]> {
+  const trimmed_prefix = prefix.trim();
+  if (trimmed_prefix.length === 0) return [];
+  const escaped_prefix = trimmed_prefix.replace(/[\\%_]/g, "\\$&");
+
+  const result = await pool.query<{ neighborhood: string }>(
+    `SELECT DISTINCT neighborhood
+       FROM locations
+      WHERE neighborhood ILIKE $1
+      ORDER BY neighborhood
+      LIMIT $2`,
+    [`${escaped_prefix}%`, MAX_NEIGHBORHOOD_SUGGESTIONS],
+  );
+  return result.rows.map((row) => row.neighborhood);
+}

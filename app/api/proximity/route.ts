@@ -5,13 +5,25 @@ import {
   fetch_corporate_location_at_point,
   fetch_nearby_independent_alternatives,
   fetch_nearest_corporate_discovery,
-  fetch_neighborhood_corporate_discovery,
+  fetch_neighborhood_discovery,
+  fetch_neighborhood_suggestions,
 } from "@/lib/db/proximity";
-import type { ApiErrorResponse, NearbyResponse, ProximityResponse } from "@/lib/types";
+import type {
+  ApiErrorResponse,
+  NearbyResponse,
+  NeighborhoodSuggestionsResponse,
+  ProximityResponse,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const MAX_NEIGHBORHOOD_LENGTH = 100;
+const MAX_TEXT_QUERY_LENGTH = 100;
+
+type ProximityApiResponse =
+  | ProximityResponse
+  | NearbyResponse
+  | NeighborhoodSuggestionsResponse
+  | ApiErrorResponse;
 
 /** Strictly parses a finite coordinate within [min, max]; returns null otherwise. */
 function parse_coordinate(raw_value: string | null, min: number, max: number): number | null {
@@ -21,34 +33,67 @@ function parse_coordinate(raw_value: string | null, min: number, max: number): n
   return parsed_value;
 }
 
+/** Trims and bounds a free-text query parameter; null means invalid. */
+function parse_text_query(raw_value: string): string | null {
+  const trimmed_value = raw_value.trim();
+  if (trimmed_value.length === 0 || trimmed_value.length > MAX_TEXT_QUERY_LENGTH) return null;
+  return trimmed_value;
+}
+
 function error_response(message: string, status: number): NextResponse<ApiErrorResponse> {
   return NextResponse.json({ error: message }, { status });
 }
 
 /**
  * GET /api/proximity
- *   ?lat&lng                  exact storefront at the point -> its Tier 3 alternatives
+ *   ?suggest=<prefix>         neighborhood lookahead suggestions
+ *   ?neighborhood=<name>      text fallback: resolve the neighborhood centroid, then run the
+ *                             standard 1500m Tier 3 search from it (plus its corporate brands)
  *   ?lat&lng&scope=nearest    closest Tier 1/2 storefronts to the user + alternatives
- *   ?neighborhood=<name>      Tier 1/2 storefronts in a neighborhood + alternatives
+ *   ?lat&lng                  exact storefront at the point -> its Tier 3 alternatives
  * Alternatives are always Tier 3, same industry vertical, <= 1500m, closest first.
  */
 export async function GET(
   request: NextRequest,
-): Promise<NextResponse<ProximityResponse | NearbyResponse | ApiErrorResponse>> {
+): Promise<NextResponse<ProximityApiResponse>> {
   const { searchParams } = request.nextUrl;
+
+  const raw_suggest = searchParams.get("suggest");
+  if (raw_suggest !== null) {
+    const prefix = parse_text_query(raw_suggest);
+    if (prefix === null) {
+      return error_response("Query parameter 'suggest' is invalid.", 400);
+    }
+    try {
+      const suggestions = await fetch_neighborhood_suggestions(prefix);
+      return NextResponse.json({ suggestions });
+    } catch (caught_error) {
+      console.error("[proximity] suggestion lookup failed:", caught_error);
+      return error_response("Unable to complete proximity lookup.", 500);
+    }
+  }
 
   const raw_neighborhood = searchParams.get("neighborhood");
   if (raw_neighborhood !== null) {
-    const neighborhood = raw_neighborhood.trim();
-    if (neighborhood.length === 0 || neighborhood.length > MAX_NEIGHBORHOOD_LENGTH) {
+    const neighborhood = parse_text_query(raw_neighborhood);
+    if (neighborhood === null) {
       return error_response("Query parameter 'neighborhood' is invalid.", 400);
     }
     try {
-      const results = await fetch_neighborhood_corporate_discovery(neighborhood);
+      const discovery = await fetch_neighborhood_discovery(neighborhood);
+      if (!discovery) {
+        return error_response(`No tracked neighborhood matches '${neighborhood}'.`, 404);
+      }
       return NextResponse.json({
-        origin: { kind: "neighborhood", neighborhood },
+        origin: {
+          kind: "neighborhood",
+          neighborhood: discovery.centroid.neighborhood,
+          latitude: discovery.centroid.latitude,
+          longitude: discovery.centroid.longitude,
+        },
         radius_meters: SEARCH_RADIUS_METERS,
-        results,
+        results: discovery.results,
+        origin_alternatives: discovery.origin_alternatives,
       });
     } catch (caught_error) {
       console.error("[proximity] neighborhood lookup failed:", caught_error);
@@ -75,6 +120,7 @@ export async function GET(
         origin: { kind: "coordinates", latitude, longitude },
         radius_meters: NEARBY_CORPORATE_RADIUS_METERS,
         results,
+        origin_alternatives: [],
       });
     }
 

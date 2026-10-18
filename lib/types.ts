@@ -59,13 +59,22 @@ export interface NearbyCorporateResult {
 export interface NearbyResponse {
   origin:
     | { kind: "coordinates"; latitude: number; longitude: number }
-    | { kind: "neighborhood"; neighborhood: string };
+    | { kind: "neighborhood"; neighborhood: string; latitude: number; longitude: number };
   radius_meters: number;
   results: NearbyCorporateResult[];
+  /**
+   * Tier 3 independents within 1500m of the neighborhood centroid, closest first.
+   * Always empty for coordinate origins.
+   */
+  origin_alternatives: AlternativeRecommendation[];
 }
 
 export interface NeighborhoodsResponse {
   neighborhoods: string[];
+}
+
+export interface NeighborhoodSuggestionsResponse {
+  suggestions: string[];
 }
 
 export interface ApiErrorResponse {
