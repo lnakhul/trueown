@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { get_database_pool } from "@/lib/db/pool";
+import { create_anon_client } from "@/lib/supabase/server";
 import { validate_evidence_url, validate_required_text } from "@/lib/validation";
 import type { ApiErrorResponse } from "@/lib/types";
 
@@ -38,6 +40,31 @@ export async function POST(
   const evidence = validate_evidence_url(fields.evidence_url);
   if (!evidence.valid) return error_response(evidence.reason, 422);
 
+  // Preferred path: insert as the `anon` role so RLS is genuinely enforced.
+  // The id is generated here because anon has no SELECT policy for RETURNING.
+  const anon_client = create_anon_client();
+  if (anon_client) {
+    const submission_id = randomUUID();
+    try {
+      const { error } = await anon_client.from("submissions").insert({
+        id: submission_id,
+        business_name: business_name.value,
+        street_address: street_address.value,
+        evidence_url: evidence.normalized_url,
+        status: "pending",
+      });
+      if (error) {
+        console.error("[submissions] anon insert rejected:", error.code, error.message);
+        return error_response("Submission could not be saved.", 500);
+      }
+      return NextResponse.json({ id: submission_id, status: "pending" }, { status: 201 });
+    } catch (caught_error) {
+      console.error("[submissions] anon insert failed:", caught_error);
+      return error_response("Submission could not be saved.", 500);
+    }
+  }
+
+  // Local Docker fallback: direct Postgres connection as the owner role.
   try {
     const insert_result = await get_database_pool().query<{ id: string }>(
       `INSERT INTO submissions (business_name, street_address, evidence_url, status)

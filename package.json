@@ -11,6 +11,8 @@
     "test": "jest --runInBand"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.118.0",
     "leaflet": "^1.9.4",
     "next": "^14.2.15",
     "pg": "^8.13.0",
