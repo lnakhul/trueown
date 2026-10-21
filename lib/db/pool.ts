@@ -12,7 +12,9 @@ function create_pool(): Pool {
     // Fail closed: never run with an implicit/default connection.
     throw new Error("DATABASE_URL environment variable is not set.");
   }
-  return new Pool({ connectionString: connection_string, max: 10 });
+  // Serverless instances multiply; keep each one small and rely on the Supabase pooler.
+  const max_connections = process.env.VERCEL ? 3 : 10;
+  return new Pool({ connectionString: connection_string, max: max_connections });
 }
 
 export function get_database_pool(): Pool {
