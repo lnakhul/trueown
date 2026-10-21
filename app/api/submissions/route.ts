@@ -3,14 +3,15 @@ import { randomUUID } from "crypto";
 import { get_database_pool } from "@/lib/db/pool";
 import { create_anon_client } from "@/lib/supabase/server";
 import { validate_evidence_url, validate_required_text } from "@/lib/validation";
-import { create_rate_limiter, get_client_key } from "@/lib/rate-limit";
+import { get_client_key } from "@/lib/rate-limit";
+import { create_shared_rate_limiter } from "@/lib/rate-limit-shared";
 import { is_turnstile_enabled, verify_turnstile_token } from "@/lib/turnstile";
 import type { ApiErrorResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 /** 5 tips per client per hour; the endpoint is public and writes to the database. */
-const submission_limiter = create_rate_limiter(5, 60 * 60 * 1000);
+const submission_limiter = create_shared_rate_limiter("submissions", 5, 60 * 60 * 1000);
 const MAX_BODY_BYTES = 8 * 1024;
 
 function error_response(message: string, status: number): NextResponse<ApiErrorResponse> {
@@ -25,7 +26,7 @@ function error_response(message: string, status: number): NextResponse<ApiErrorR
 export async function POST(
   request: NextRequest,
 ): Promise<NextResponse<{ id: string; status: "pending" } | ApiErrorResponse>> {
-  const limit = submission_limiter.check(get_client_key(request.headers));
+  const limit = await submission_limiter.check(get_client_key(request.headers));
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many submissions. Please try again later." },

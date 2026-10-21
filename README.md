@@ -56,6 +56,7 @@ Copy [.env.example](.env.example) to `.env.local`. Never commit real values.
 | `DATABASE_URL` | Server-only Postgres connection string (for hosted Supabase use the session pooler) |
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public Supabase values, protected by RLS |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile; the secret is server-only |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Optional shared rate limiting; unset = per-instance in-memory |
 | `ADMIN_PASSWORD` | HTTP Basic fallback for `/admin` when Supabase is not configured |
 
 Never put the Supabase service-role key in client code.
@@ -75,6 +76,10 @@ npm run db:import:venues -- <venues.csv>           # brands + storefronts with p
 ```
 
 The venue template and field guide are in [data/templates/](data/templates). Each brand needs an ownership source type, public URL and verification date.
+
+## Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel + Supabase checklist. `GET /api/health` is the uptime-monitor endpoint.
 
 ## Testing
 
