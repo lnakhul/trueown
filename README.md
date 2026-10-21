@@ -1,5 +1,8 @@
 # TrueOwn
 
+[![CI](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+
 **See who really owns your coffee shop, and find independent alternatives nearby.**
 
 TrueOwn maps private-equity and venture-backed coffee shops and bakeries in New York City. For each one it shows the ownership tier and points you to verified, independently owned shops within a five-minute walk (1,500 m).
@@ -105,7 +108,7 @@ __tests__/      Geospatial, RLS and importer tests
 
 ## Security
 
-Security headers, RLS, server-side Turnstile verification, rate limiting and parameterized SQL are on by default. Please report vulnerabilities privately to the maintainers rather than opening a public issue.
+Security headers, RLS, server-side Turnstile verification, rate limiting and parameterized SQL are on by default. See [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
 ## Data sources and accuracy
 
@@ -113,7 +116,7 @@ Ownership claims are hand-curated and cited: Tier 1/2 from SEC EDGAR, investor p
 
 ## Contributing
 
-Issues and pull requests are welcome. Run `npm run typecheck` and `npm test` first. By contributing you agree your work is licensed under AGPL-3.0.
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) first. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Release history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

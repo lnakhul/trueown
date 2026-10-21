@@ -1,0 +1,26 @@
+name: Bug report
+description: Something in the app is not working
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you expected and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Go to ...\n2. Search for ...\n3. See error"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Browser / device
+      placeholder: Safari 18 on iPhone 15
+  - type: markdown
+    attributes:
+      value: "Security issue? Do not file it here. See SECURITY.md."
