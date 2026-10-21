@@ -42,3 +42,7 @@ The import is **all-or-nothing**: any invalid row, tier conflict or database err
 ```csv
 Example Roasters,coffee_bakery,3,,Family-run roaster since 1987,nys_dos_corporations,https://apps.dos.ny.gov/publicInquiry/,2026-10-01,"1 Example St, New York, NY 10001",,New York,40.7506,-73.9972
 ```
+
+## Brand-only file
+
+`brands_template.csv` is the header for `npm run db:import:brands`: one row per brand, no storefronts. `financial_backers` is accepted but not stored. Keep unsourced working files out of git (`data/**/vetted_*.csv` and `*_draft.csv` are ignored).

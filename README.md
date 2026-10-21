@@ -45,7 +45,7 @@ The first start creates the schema and seed data from `supabase/`. Then load bou
 export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/trueown
 npm install
 npm run db:import:boundaries
-npm run db:import:brands -- data/nyc/vetted_brands_data.csv
+npm run db:import:brands -- your_brands.csv   # start from data/templates/brands_template.csv
 ```
 
 Open http://localhost:3000. To reset the local database: `docker compose down -v`.

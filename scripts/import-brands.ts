@@ -1,9 +1,9 @@
 /**
  * Loads brand-level rows (no storefronts) from a CSV.
  *
- *   npm run db:import:brands -- data/nyc/vetted_brands_data.csv --dry-run
- *   npm run db:import:brands -- data/nyc/vetted_brands_data.csv          (local database)
- *   npm run db:import:brands -- data/nyc/vetted_brands_data.csv --yes    (non-local database)
+ *   npm run db:import:brands -- your_brands.csv --dry-run
+ *   npm run db:import:brands -- your_brands.csv          (local database)
+ *   npm run db:import:brands -- your_brands.csv --yes    (non-local database)
  */
 import { readFileSync } from "fs";
 import { Pool } from "pg";

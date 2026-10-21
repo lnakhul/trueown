@@ -8,3 +8,4 @@ next-env.d.ts
 # Unsourced research drafts: never publish claims without citations
 data/**/*_draft.csv
 data/private/
+data/**/vetted_*.csv
