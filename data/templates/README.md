@@ -24,7 +24,7 @@ The import is **all-or-nothing**: any invalid row, tier conflict or database err
 | `corporate_tier` | yes | `1` PE / institutional, `2` VC / growth equity, `3` independent. |
 | `parent_entity` | Tier 1-2 only | The owner or investor. **Must be blank for Tier 3.** |
 | `unique_selling_proposition` | no | Max 300 chars. Shown on the recommendation cards. |
-| `ownership_source_type` | yes | Tier 1-2: `sec_edgar`, `investor_press_release`, `pitchbook`, `crunchbase`, `mergr`. Tier 3: `nys_dos_corporations`, `eater_ny`, `community_consensus`. |
+| `ownership_source_type` | yes | Tier 1-2: `sec_edgar`, `investor_press_release`, `pitchbook`, `crunchbase`, `mergr`, `reputable_news` (a major outlet reporting the deal). Tier 3: `nys_dos_corporations`, `eater_ny`, `community_consensus`. |
 | `ownership_source_url` | yes | Public `http(s)` link to the evidence. |
 | `ownership_verified_on` | yes | Date you checked the source, `YYYY-MM-DD`, not in the future. |
 | `address` | yes | Full street address. A brand cannot have the same address twice. |
