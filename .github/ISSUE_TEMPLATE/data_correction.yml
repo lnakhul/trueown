@@ -1,0 +1,39 @@
+name: Data correction
+description: Report a wrong or outdated ownership claim, or a missing or closed shop
+labels: [data]
+body:
+  - type: markdown
+    attributes:
+      value: "Every ownership claim needs a public source. Claims without one will be declined."
+  - type: input
+    id: business
+    attributes:
+      label: Business name and address
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What needs fixing?
+      options:
+        - Ownership / tier is wrong
+        - Ownership changed recently
+        - Shop is closed or moved
+        - Missing shop (add it)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What is correct, and what does it say now?
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Evidence link
+      description: SEC filing, press release, PitchBook/Crunchbase record, reputable news article, or NYS Division of Corporations entry.
+      placeholder: https://
+    validations:
+      required: true

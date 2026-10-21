@@ -1,6 +1,20 @@
 {
   "name": "trueown",
   "version": "0.1.0",
+  "description": "Find out who owns your coffee shop (private equity, venture capital or independent) and discover independent alternatives within a five-minute walk.",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "nextjs",
+    "supabase",
+    "postgis",
+    "leaflet",
+    "ownership-transparency",
+    "local-business",
+    "nyc"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0",
