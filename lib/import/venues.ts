@@ -41,6 +41,7 @@ export const CORPORATE_SOURCE_TYPES = [
   "pitchbook",
   "crunchbase",
   "mergr",
+  "reputable_news",
 ] as const;
 export const INDEPENDENT_SOURCE_TYPES = [
   "nys_dos_corporations",
