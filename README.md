@@ -34,7 +34,7 @@ Next.js 14 (App Router) · TypeScript · Tailwind CSS · Supabase (PostgreSQL + 
 Requires Docker with Compose.
 
 ```bash
-git clone <your-repo-url> trueown && cd trueown
+git clone https://github.com/lnakhul/trueown.git trueown && cd trueown
 cp .env.example .env.local        # fill in values; see Configuration
 docker compose up --build         # web on :3000, PostGIS on :5432
 ```
