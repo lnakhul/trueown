@@ -43,7 +43,8 @@ services:
       - ./supabase/migrations/20261020000000_neighborhood_boundaries.sql:/docker-entrypoint-initdb.d/04_neighborhood_boundaries.sql:ro
       - ./supabase/migrations/20261021000000_reputable_news_source.sql:/docker-entrypoint-initdb.d/05_reputable_news_source.sql:ro
       - ./supabase/migrations/20261022000000_brand_financial_backers.sql:/docker-entrypoint-initdb.d/06_brand_financial_backers.sql:ro
-      - ./supabase/seed.sql:/docker-entrypoint-initdb.d/07_seed.sql:ro
+      - ./supabase/migrations/20261023000000_03_regional_markets.sql:/docker-entrypoint-initdb.d/07_regional_markets.sql:ro
+      - ./supabase/seed.sql:/docker-entrypoint-initdb.d/08_seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d trueown"]
       interval: 5s

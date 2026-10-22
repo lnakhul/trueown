@@ -5,6 +5,7 @@ import { GET as proximity_handler } from "@/app/api/proximity/route";
 import { get_database_pool } from "@/lib/db/pool";
 import {
   MAX_RECOMMENDATIONS,
+  MARKET_RADIUS_METERS,
   SEARCH_RADIUS_METERS,
   fetch_corporate_location_by_address,
   fetch_nearby_independent_alternatives,
@@ -12,7 +13,7 @@ import {
   fetch_neighborhood_centroid,
   fetch_neighborhood_suggestions,
 } from "@/lib/db/proximity";
-import type { NearbyResponse, ProximityResponse } from "@/lib/types";
+import type { NearbyResponse, OutsideMarketResponse, ProximityResponse } from "@/lib/types";
 
 /**
  * Integration tests against a real PostGIS database seeded with
@@ -160,12 +161,14 @@ describe("C: zero-state results", () => {
     expect(payload.alternatives).toHaveLength(0);
   });
 
-  test("a remote origin returns an empty, well-formed nearest payload", async () => {
-    const response = await call_proximity("?scope=nearest&lat=51.5&lng=-0.12");
+  test("a remote origin gets a structured outside-market response naming the closest active market", async () => {
+    const response = await call_proximity("?scope=nearest&lat=51.5&lng=-0.12&vertical=coffee_bakery");
     expect(response.status).toBe(200);
-    const payload = (await response.json()) as NearbyResponse;
-    expect(payload.results).toEqual([]);
-    expect(payload.origin_alternatives).toEqual([]);
+    const payload = (await response.json()) as OutsideMarketResponse;
+    expect(payload.status).toBe("outside_active_market");
+    expect(payload.closest_active_market?.city_name).toBe("New York City");
+    expect(payload.closest_active_market?.distance_meters).toBeGreaterThan(MARKET_RADIUS_METERS);
+    expect(payload).not.toHaveProperty("results");
   });
 });
 
@@ -211,7 +214,7 @@ describe("neighborhood text fallback: centroid origin + 1500m search", () => {
   });
 
   test("West Village: alternatives are bounded to 1500m of the centroid and sorted", async () => {
-    const response = await call_proximity("?neighborhood=West%20Village");
+    const response = await call_proximity("?neighborhood=West%20Village&vertical=coffee_bakery");
     expect(response.status).toBe(200);
     const payload = (await response.json()) as NearbyResponse;
 
@@ -230,7 +233,7 @@ describe("neighborhood text fallback: centroid origin + 1500m search", () => {
   });
 
   test("Astoria: no corporate brands, but its centroid still finds Mighty Oak Roasters", async () => {
-    const response = await call_proximity("?neighborhood=astoria");
+    const response = await call_proximity("?neighborhood=astoria&vertical=coffee_bakery");
     expect(response.status).toBe(200);
     const payload = (await response.json()) as NearbyResponse;
     expect(payload.results).toEqual([]);
@@ -240,9 +243,10 @@ describe("neighborhood text fallback: centroid origin + 1500m search", () => {
   });
 
   test("unknown or invalid neighborhood input is rejected cleanly", async () => {
-    expect((await call_proximity("?neighborhood=Atlantis")).status).toBe(404);
-    expect((await call_proximity("?neighborhood=%20")).status).toBe(400);
-    expect((await call_proximity(`?neighborhood=${"x".repeat(101)}`)).status).toBe(400);
+    const scope = "&vertical=coffee_bakery";
+    expect((await call_proximity(`?neighborhood=Atlantis${scope}`)).status).toBe(404);
+    expect((await call_proximity(`?neighborhood=%20${scope}`)).status).toBe(400);
+    expect((await call_proximity(`?neighborhood=${"x".repeat(101)}${scope}`)).status).toBe(400);
   });
 
   test("lookahead suggests by prefix and treats LIKE wildcards literally", async () => {
@@ -260,9 +264,9 @@ describe("neighborhood text fallback: centroid origin + 1500m search", () => {
 });
 
 describe("city and vertical scope", () => {
-  test("neighborhood search spans every vertical when none is given", async () => {
-    const payload = (await (await call_proximity("?neighborhood=West%20Village")).json()) as NearbyResponse;
-    expect(payload.origin_alternatives.length).toBeGreaterThan(0);
+  test("a search that starts from a location requires an industry vertical", async () => {
+    expect((await call_proximity("?neighborhood=West%20Village")).status).toBe(400);
+    expect((await call_proximity("?scope=nearest&lat=40.7324&lng=-74.0021")).status).toBe(400);
   });
 
   test("a vertical with no storefronts returns nothing; the right one still matches", async () => {
@@ -280,8 +284,8 @@ describe("city and vertical scope", () => {
   });
 
   test("city scope narrows neighborhood matching and suggestions", async () => {
-    expect((await call_proximity("?neighborhood=West%20Village&city=New%20York")).status).toBe(200);
-    expect((await call_proximity("?neighborhood=West%20Village&city=Atlantis")).status).toBe(404);
+    expect((await call_proximity("?neighborhood=West%20Village&city=New%20York&vertical=coffee_bakery")).status).toBe(200);
+    expect((await call_proximity("?neighborhood=West%20Village&city=Atlantis&vertical=coffee_bakery")).status).toBe(404);
     const response = await call_proximity("?suggest=wes&city=Atlantis");
     expect(((await response.json()) as { suggestions: string[] }).suggestions).toEqual([]);
   });
@@ -316,4 +320,186 @@ describe("neighborhood label point", () => {
     }
     expect(outside).toEqual([]);
   }, 60_000);
+});
+
+/* ------------------------------------------------------------------------- */
+/* Multi-market and multi-vertical fixtures (Austin and Chicago go live)      */
+/* ------------------------------------------------------------------------- */
+
+interface FixtureStorefront {
+  brand: string;
+  tier: 2 | 3;
+  vertical: "coffee_bakery" | "bar_nightlife";
+  market_city: "Austin" | "Chicago";
+  latitude: number;
+  longitude: number;
+}
+
+const FIXTURE_PREFIX = "ZZ Market Test";
+const AUSTIN_BAR_CORP = { latitude: 30.27, longitude: -97.74 };
+
+const FIXTURE_STOREFRONTS: readonly FixtureStorefront[] = [
+  { brand: `${FIXTURE_PREFIX} Austin Roasters`, tier: 3, vertical: "coffee_bakery", market_city: "Austin", latitude: 30.268, longitude: -97.7431 },
+  { brand: `${FIXTURE_PREFIX} Austin Coffee Corp`, tier: 2, vertical: "coffee_bakery", market_city: "Austin", latitude: 30.2701, longitude: -97.74 },
+  { brand: `${FIXTURE_PREFIX} Austin Cafe`, tier: 3, vertical: "coffee_bakery", market_city: "Austin", latitude: 30.2702, longitude: -97.7401 },
+  { brand: `${FIXTURE_PREFIX} Austin Bar Corp`, tier: 2, vertical: "bar_nightlife", market_city: "Austin", ...AUSTIN_BAR_CORP },
+  { brand: `${FIXTURE_PREFIX} Austin Dive Bar`, tier: 3, vertical: "bar_nightlife", market_city: "Austin", latitude: 30.2704, longitude: -97.7398 },
+  { brand: `${FIXTURE_PREFIX} Chicago Coffee Corp`, tier: 2, vertical: "coffee_bakery", market_city: "Chicago", latitude: 41.8781, longitude: -87.6298 },
+  { brand: `${FIXTURE_PREFIX} Chicago Roasters`, tier: 3, vertical: "coffee_bakery", market_city: "Chicago", latitude: 41.8785, longitude: -87.63 },
+];
+
+async function delete_market_fixtures(): Promise<void> {
+  await test_pool.query("DELETE FROM brands WHERE name LIKE $1", [`${FIXTURE_PREFIX}%`]);
+}
+
+describe("regional markets and verticals", () => {
+  beforeAll(async () => {
+    await delete_market_fixtures();
+    await test_pool.query("UPDATE markets SET status = 'active' WHERE city_name IN ('Austin', 'Chicago')");
+    for (const [index, storefront] of FIXTURE_STOREFRONTS.entries()) {
+      const brand = await test_pool.query<{ id: string }>(
+        `INSERT INTO brands (name, corporate_tier, industry_vertical, parent_entity, unique_selling_proposition)
+         VALUES ($1, $2, $3::industry_vertical, $4, $5) RETURNING id`,
+        [storefront.brand, storefront.tier, storefront.vertical, storefront.tier === 3 ? null : "ZZ Capital", "Fixture"],
+      );
+      await test_pool.query(
+        `INSERT INTO locations (brand_id, address, city, coordinates)
+         VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326))`,
+        [brand.rows[0]!.id, `${index} Fixture St`, storefront.market_city, storefront.longitude, storefront.latitude],
+      );
+    }
+  });
+
+  afterAll(async () => {
+    await delete_market_fixtures();
+    await test_pool.query("UPDATE markets SET status = 'coming_soon' WHERE city_name IN ('Austin', 'Chicago')");
+  });
+
+  async function market_cities_of(location_ids: string[]): Promise<string[]> {
+    const result = await test_pool.query<{ city_name: string }>(
+      `SELECT DISTINCT m.city_name FROM locations l JOIN markets m ON m.id = l.market_id WHERE l.id = ANY($1::uuid[])`,
+      [location_ids],
+    );
+    return result.rows.map((row) => row.city_name);
+  }
+
+  test("locations are assigned to the market covering their coordinates", async () => {
+    const result = await test_pool.query<{ brand: string; city_name: string }>(
+      `SELECT b.name AS brand, m.city_name
+         FROM locations l JOIN brands b ON b.id = l.brand_id JOIN markets m ON m.id = l.market_id
+        WHERE b.name LIKE $1`,
+      [`${FIXTURE_PREFIX}%`],
+    );
+    expect(result.rows).toHaveLength(FIXTURE_STOREFRONTS.length);
+    for (const row of result.rows) {
+      expect(row.city_name).toBe(row.brand.includes("Chicago") ? "Chicago" : "Austin");
+    }
+    await expect(
+      test_pool.query(
+        `INSERT INTO locations (brand_id, address, city, coordinates)
+         SELECT id, 'Nowhere', 'Nowhere', ST_SetSRID(ST_MakePoint(0, 0), 4326) FROM brands WHERE name LIKE $1 LIMIT 1`,
+        [`${FIXTURE_PREFIX}%`],
+      ),
+    ).rejects.toThrow(/not within 50 miles of any market/);
+  });
+
+  test("E (cross-market isolation): an Austin query returns only Austin venues, never NYC or Chicago", async () => {
+    const response = await call_proximity(
+      `?scope=nearest&lat=${AUSTIN_BAR_CORP.latitude}&lng=${AUSTIN_BAR_CORP.longitude}&vertical=coffee_bakery`,
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as NearbyResponse;
+
+    expect(payload.results.length).toBeGreaterThan(0);
+    const brand_names = [
+      ...payload.results.map((entry) => entry.target.brand_name),
+      ...payload.results.flatMap((entry) => entry.alternatives.map((alternative) => alternative.brand_name)),
+    ];
+    expect(brand_names).toContain(`${FIXTURE_PREFIX} Austin Cafe`);
+    expect(brand_names.every((name) => name.startsWith(`${FIXTURE_PREFIX} Austin`))).toBe(true);
+
+    const location_ids = payload.results.flatMap((entry) => [
+      entry.target.location_id,
+      ...entry.alternatives.map((alternative) => alternative.location_id),
+    ]);
+    expect(await market_cities_of(location_ids)).toEqual(["Austin"]);
+
+    // The market filter holds even where the radius would otherwise match: Austin's point
+    // scoped to the NYC market yields nothing.
+    const nyc_market = await test_pool.query<{ id: string }>("SELECT id FROM markets WHERE city_name = 'New York City'");
+    const bleed = await fetch_nearby_independent_alternatives(
+      AUSTIN_BAR_CORP.latitude,
+      AUSTIN_BAR_CORP.longitude,
+      "coffee_bakery",
+      test_pool,
+      nyc_market.rows[0]!.id,
+    );
+    expect(bleed).toEqual([]);
+
+    // And the reverse: an NYC query never surfaces the Austin or Chicago fixtures.
+    const nyc = (await (await call_proximity("?scope=nearest&lat=40.7324&lng=-74.0021&vertical=coffee_bakery")).json()) as NearbyResponse;
+    const nyc_names = nyc.results.flatMap((entry) => [entry.target.brand_name, ...entry.alternatives.map((a) => a.brand_name)]);
+    expect(nyc_names.length).toBeGreaterThan(0);
+    expect(nyc_names.some((name) => name.startsWith(FIXTURE_PREFIX))).toBe(false);
+  });
+
+  test("E: Chicago coordinates resolve to Chicago only", async () => {
+    const response = await call_proximity("?scope=nearest&lat=41.8781&lng=-87.6298&vertical=coffee_bakery");
+    const payload = (await response.json()) as NearbyResponse;
+    const names = payload.results.flatMap((entry) => [entry.target.brand_name, ...entry.alternatives.map((a) => a.brand_name)]);
+    expect(names).toEqual([`${FIXTURE_PREFIX} Chicago Coffee Corp`, `${FIXTURE_PREFIX} Chicago Roasters`]);
+  });
+
+  test("a market that is not active is treated as outside the service area", async () => {
+    await test_pool.query("UPDATE markets SET status = 'coming_soon' WHERE city_name = 'Chicago'");
+    try {
+      const payload = (await (await call_proximity("?scope=nearest&lat=41.8781&lng=-87.6298&vertical=coffee_bakery")).json()) as OutsideMarketResponse;
+      expect(payload.status).toBe("outside_active_market");
+      expect(payload.closest_active_market?.city_name).not.toBe("Chicago");
+    } finally {
+      await test_pool.query("UPDATE markets SET status = 'active' WHERE city_name = 'Chicago'");
+    }
+  });
+
+  test("F (category disambiguation): a bar_nightlife query returns zero coffee shops in the same block", async () => {
+    // Exact-point lookup on the bar's own coordinates; a coffee corporate storefront sits ~11m away.
+    const response = await call_proximity(
+      `?lat=${AUSTIN_BAR_CORP.latitude}&lng=${AUSTIN_BAR_CORP.longitude}&vertical=bar_nightlife`,
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as ProximityResponse;
+    expect(payload.target_brand_name).toBe(`${FIXTURE_PREFIX} Austin Bar Corp`);
+    expect(payload.industry_vertical).toBe("bar_nightlife");
+    expect(payload.alternatives.map((alternative) => alternative.brand_name)).toEqual([`${FIXTURE_PREFIX} Austin Dive Bar`]);
+
+    // Nearest search: no coffee storefront appears as a target or an alternative.
+    const nearest = (await (
+      await call_proximity(
+        `?scope=nearest&lat=${AUSTIN_BAR_CORP.latitude}&lng=${AUSTIN_BAR_CORP.longitude}&vertical=bar_nightlife`,
+      )
+    ).json()) as NearbyResponse;
+    const names = nearest.results.flatMap((entry) => [entry.target.brand_name, ...entry.alternatives.map((a) => a.brand_name)]);
+    expect(names).toEqual([`${FIXTURE_PREFIX} Austin Bar Corp`, `${FIXTURE_PREFIX} Austin Dive Bar`]);
+    expect(names.some((name) => /Cafe|Coffee|Roasters/.test(name))).toBe(false);
+  });
+
+  test("F: the vertical is honoured in the database, not just in the response", async () => {
+    const coffee = await fetch_nearby_independent_alternatives(
+      AUSTIN_BAR_CORP.latitude,
+      AUSTIN_BAR_CORP.longitude,
+      "coffee_bakery",
+      test_pool,
+    );
+    expect(coffee.map((alternative) => alternative.brand_name)).toEqual([
+      `${FIXTURE_PREFIX} Austin Cafe`,
+      `${FIXTURE_PREFIX} Austin Roasters`,
+    ]);
+    const restaurants = await fetch_nearby_independent_alternatives(
+      AUSTIN_BAR_CORP.latitude,
+      AUSTIN_BAR_CORP.longitude,
+      "restaurant",
+      test_pool,
+    );
+    expect(restaurants).toEqual([]);
+  });
 });

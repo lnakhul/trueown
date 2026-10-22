@@ -5,12 +5,17 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Added
-- Optional Sentry error tracking with PII scrubbing (disabled without a DSN).
+- `markets` table (migration `20261023000000_03_regional_markets.sql`) seeded with New York City (active), Austin and Chicago (coming soon); `locations.market_id` is assigned automatically from coordinates within 50 miles.
+- `outside_active_market` API response naming the closest active market, with a matching notice in the UI.
+- Venue importer validates each storefront against the markets table and warns when a market is not active.
+- Tests for cross-market isolation (Austin/Chicago vs NYC) and category disambiguation (`bar_nightlife` vs coffee). error tracking with PII scrubbing (disabled without a DSN).
 - City and business-type selectors; `GET /api/catalog`; `vertical` and `city` query parameters on the proximity and neighborhood APIs.
 - `brands.financial_backers` column (migration `20261022000000`), importer support and a "Backed by" line in the alert banner.
 - Accessibility pass: skip link, focus-visible styles, reduced-motion support, dialog focus trap, combobox neighborhood search, contrast and touch-target fixes.
 
 ### Changed
+- **Breaking (API):** `vertical` is now required for `scope=nearest` and `neighborhood=` lookups (400 without it); the UI no longer offers "All types".
+- Coordinate lookups resolve the nearest active market first and are isolated to it.
 - Neighborhood search no longer defaults to `coffee_bakery`; it spans all verticals unless one is selected.
 - Neighborhood label points use `ST_PointOnSurface` when the centroid falls outside the polygon.
 - Geolocation cache key bumped to `v2`.

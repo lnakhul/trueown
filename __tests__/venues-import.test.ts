@@ -116,4 +116,27 @@ describe("venue import (database)", () => {
     const tier = await pool.query("SELECT corporate_tier FROM brands WHERE name = 'ZZ Test Roasters'");
     expect(tier.rows[0].corporate_tier).toBe(3);
   });
+
+  test("loads a non-coffee vertical in another market and assigns its market", async () => {
+    const bar =
+      'ZZ Test Dive Bar,bar_nightlife,3,,Neighborhood dive,community_consensus,https://example.com/austin-dive,2026-10-01,"1 Test Ave, Austin, TX 78701",,Austin,30.2672,-97.7431';
+    const summary = await import_venues(pool, parse(bar).rows);
+    expect(summary.errors).toEqual([]);
+    expect(summary.locations_created).toBe(1);
+    expect(summary.warnings.some((warning) => warning.includes("Austin"))).toBe(true);
+
+    const row = await pool.query(
+      `SELECT b.industry_vertical, m.city_name
+         FROM locations l JOIN brands b ON b.id = l.brand_id JOIN markets m ON m.id = l.market_id
+        WHERE b.name = 'ZZ Test Dive Bar'`,
+    );
+    expect(row.rows[0]).toEqual({ industry_vertical: "bar_nightlife", city_name: "Austin" });
+  });
+
+  test("rejects a storefront that is not within 50 miles of any market", async () => {
+    const remote =
+      'ZZ Test Remote,restaurant,3,,Far away,community_consensus,https://example.com/remote,2026-10-01,"1 Remote Rd, Nowhere",,Nowhere,-33.8688,151.2093';
+    const summary = await import_venues(pool, parse(remote).rows);
+    expect(summary.errors.some((error) => error.includes("50 miles of any market"))).toBe(true);
+  });
 });

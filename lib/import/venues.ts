@@ -321,6 +321,7 @@ export async function import_venues(
   try {
     await client.query("BEGIN");
     const boundary_cache = new Map<string, boolean>();
+    const market_warnings = new Set<string>();
     const brand_ids = new Map<string, string | null>();
 
     for (const row of rows) {
@@ -391,6 +392,29 @@ export async function import_venues(
       } else {
         summary.warnings.push(
           `Line ${row.line}: no neighborhood boundaries are loaded for "${row.city}", so coordinates were not sanity-checked.`,
+        );
+      }
+
+      const market_result = await client.query<{ city_name: string; status: string }>(
+        `SELECT city_name, status FROM markets
+          WHERE ST_DWithin(geographic_center::geography,
+                           ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, 80467.2)
+          ORDER BY ST_Distance(geographic_center::geography,
+                               ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography)
+          LIMIT 1`,
+        [row.longitude, row.latitude],
+      );
+      const market = market_result.rows[0];
+      if (!market) {
+        summary.errors.push(
+          `Line ${row.line}: (${row.latitude}, ${row.longitude}) is not within 50 miles of any market. Add the city to the markets table first.`,
+        );
+        continue;
+      }
+      if (market.status !== "active" && !market_warnings.has(market.city_name)) {
+        market_warnings.add(market.city_name);
+        summary.warnings.push(
+          `Market "${market.city_name}" is '${market.status}': rows are stored but not served until it is set to 'active'.`,
         );
       }
 

@@ -5,6 +5,7 @@ import {
   SEARCH_RADIUS_METERS,
   type DiscoveryFilters,
   fetch_corporate_location_at_point,
+  fetch_market_for_point,
   fetch_nearby_independent_alternatives,
   fetch_nearest_corporate_discovery,
   fetch_neighborhood_discovery,
@@ -15,6 +16,7 @@ import type {
   ApiErrorResponse,
   NearbyResponse,
   NeighborhoodSuggestionsResponse,
+  OutsideMarketResponse,
   ProximityResponse,
 } from "@/lib/types";
 
@@ -26,6 +28,7 @@ type ProximityApiResponse =
   | ProximityResponse
   | NearbyResponse
   | NeighborhoodSuggestionsResponse
+  | OutsideMarketResponse
   | ApiErrorResponse;
 
 /** Strictly parses a finite coordinate within [min, max]; returns null otherwise. */
@@ -58,7 +61,19 @@ function parse_filters(search_params: URLSearchParams): DiscoveryFilters | NextR
   if (raw_city !== null && city === null) {
     return error_response("Query parameter 'city' is invalid.", 400);
   }
-  return { industry_vertical, city };
+  return { industry_vertical, city, market_id: null };
+}
+
+/**
+ * Discovery modes that start from a location (not a known brand) must name the
+ * industry vertical, so a search near a gym or bar can never return bakeries.
+ */
+function require_vertical(filters: DiscoveryFilters): NextResponse<ApiErrorResponse> | null {
+  if (filters.industry_vertical !== null) return null;
+  return error_response(
+    "Query parameter 'vertical' is required and must be a known industry vertical.",
+    400,
+  );
 }
 
 function error_response(message: string, status: number): NextResponse<ApiErrorResponse> {
@@ -67,7 +82,9 @@ function error_response(message: string, status: number): NextResponse<ApiErrorR
 
 /**
  * GET /api/proximity
- * Optional on every mode except the exact-point lookup: &vertical=<enum> and &city=<name>.
+ * &vertical=<enum> is REQUIRED for scope=nearest and neighborhood= lookups; &city=<name> is optional.
+ * Coordinate modes first resolve the nearest active market; outside 50 miles of every active
+ * market the response is { status: "outside_active_market", closest_active_market, message }.
  *   ?suggest=<prefix>         neighborhood lookahead suggestions
  *   ?neighborhood=<name>      text fallback: resolve the neighborhood centroid, then run the
  *                             standard 1500m Tier 3 search from it (plus its corporate brands)
@@ -103,6 +120,8 @@ export async function GET(
     if (neighborhood === null) {
       return error_response("Query parameter 'neighborhood' is invalid.", 400);
     }
+    const missing_vertical = require_vertical(filters);
+    if (missing_vertical) return missing_vertical;
     try {
       const discovery = await fetch_neighborhood_discovery(neighborhood, undefined, filters);
       if (!discovery) {
@@ -137,9 +156,28 @@ export async function GET(
     return error_response("Query parameter 'scope' must be 'nearest' when provided.", 400);
   }
 
+  if (scope === "nearest") {
+    const missing_vertical = require_vertical(filters);
+    if (missing_vertical) return missing_vertical;
+  }
+
   try {
+    // Resolve the regional market first: every search below is isolated to it.
+    const market_resolution = await fetch_market_for_point(latitude, longitude);
+    const market = market_resolution.closest_active_market;
+    if (!market || !market_resolution.within_market) {
+      return NextResponse.json({
+        status: "outside_active_market",
+        message: market
+          ? `TrueOwn is not active within 50 miles of this location yet. The closest active market is ${market.city_name}.`
+          : "TrueOwn has no active markets yet.",
+        closest_active_market: market,
+      });
+    }
+    const market_filters: DiscoveryFilters = { ...filters, market_id: market.id };
+
     if (scope === "nearest") {
-      const results = await fetch_nearest_corporate_discovery(latitude, longitude, undefined, filters);
+      const results = await fetch_nearest_corporate_discovery(latitude, longitude, undefined, market_filters);
       return NextResponse.json({
         origin: { kind: "coordinates", latitude, longitude },
         radius_meters: NEARBY_CORPORATE_RADIUS_METERS,
@@ -148,7 +186,12 @@ export async function GET(
       });
     }
 
-    const target = await fetch_corporate_location_at_point(latitude, longitude);
+    const target = await fetch_corporate_location_at_point(
+      latitude,
+      longitude,
+      undefined,
+      filters.industry_vertical,
+    );
     if (!target) {
       return error_response("No Tier 1 or Tier 2 brand location found at these coordinates.", 404);
     }
@@ -157,6 +200,8 @@ export async function GET(
       latitude,
       longitude,
       target.industry_vertical,
+      undefined,
+      target.market_id,
     );
 
     return NextResponse.json({
