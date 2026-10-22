@@ -1,3 +1,4 @@
+import { report_error } from "@/lib/monitoring";
 import { NextResponse, type NextRequest } from "next/server";
 import { create_session_client } from "@/lib/supabase/server";
 
@@ -10,7 +11,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     try {
       await supabase.auth.signOut();
     } catch (caught_error) {
-      console.error("[auth/signout] failed:", caught_error);
+      report_error("[auth/signout] failed", caught_error);
     }
   }
   return NextResponse.redirect(new URL("/admin/login", request.url), { status: 303 });

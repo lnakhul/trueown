@@ -2,7 +2,8 @@ import type { NearbyResponse } from "@/lib/types";
 
 /** Strict 15-minute expiry for the cached discovery state. */
 export const GEOLOCATION_CACHE_TTL_MS = 15 * 60 * 1000;
-export const GEOLOCATION_CACHE_KEY = "trueown:discovery:v1";
+/** Bump the version whenever the cached payload shape changes (v2: financial_backers). */
+export const GEOLOCATION_CACHE_KEY = "trueown:discovery:v2";
 
 /** Where the cached payload came from; decides whether we skip the permission prompt. */
 export type CachedDiscoverySource = "device" | "neighborhood";

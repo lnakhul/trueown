@@ -1,3 +1,4 @@
+import { report_error } from "@/lib/monitoring";
 import { NextRequest, NextResponse } from "next/server";
 import { UUID_PATTERN, validate_approval_input } from "@/lib/approval";
 import {
@@ -46,7 +47,7 @@ export async function POST(
     if (caught_error instanceof BrandTierConflictError) {
       return error_response(caught_error.message, 409);
     }
-    console.error("[admin/approve] failed:", caught_error);
+    report_error("[admin/approve] failed", caught_error);
     return error_response("Unable to approve submission.", 500);
   }
 }

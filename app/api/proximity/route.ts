@@ -1,13 +1,16 @@
+import { report_error } from "@/lib/monitoring";
 import { NextRequest, NextResponse } from "next/server";
 import {
   NEARBY_CORPORATE_RADIUS_METERS,
   SEARCH_RADIUS_METERS,
+  type DiscoveryFilters,
   fetch_corporate_location_at_point,
   fetch_nearby_independent_alternatives,
   fetch_nearest_corporate_discovery,
   fetch_neighborhood_discovery,
   fetch_neighborhood_suggestions,
 } from "@/lib/db/proximity";
+import { parse_city, parse_vertical } from "@/lib/catalog";
 import type {
   ApiErrorResponse,
   NearbyResponse,
@@ -40,12 +43,31 @@ function parse_text_query(raw_value: string): string | null {
   return trimmed_value;
 }
 
+/**
+ * Reads the optional `vertical` and `city` scope. A parameter that is present but
+ * malformed is a client error (never silently widened to "everything").
+ */
+function parse_filters(search_params: URLSearchParams): DiscoveryFilters | NextResponse<ApiErrorResponse> {
+  const raw_vertical = search_params.get("vertical");
+  const industry_vertical = parse_vertical(raw_vertical);
+  if (raw_vertical !== null && industry_vertical === null) {
+    return error_response("Query parameter 'vertical' is not a known industry vertical.", 400);
+  }
+  const raw_city = search_params.get("city");
+  const city = parse_city(raw_city);
+  if (raw_city !== null && city === null) {
+    return error_response("Query parameter 'city' is invalid.", 400);
+  }
+  return { industry_vertical, city };
+}
+
 function error_response(message: string, status: number): NextResponse<ApiErrorResponse> {
   return NextResponse.json({ error: message }, { status });
 }
 
 /**
  * GET /api/proximity
+ * Optional on every mode except the exact-point lookup: &vertical=<enum> and &city=<name>.
  *   ?suggest=<prefix>         neighborhood lookahead suggestions
  *   ?neighborhood=<name>      text fallback: resolve the neighborhood centroid, then run the
  *                             standard 1500m Tier 3 search from it (plus its corporate brands)
@@ -57,6 +79,8 @@ export async function GET(
   request: NextRequest,
 ): Promise<NextResponse<ProximityApiResponse>> {
   const { searchParams } = request.nextUrl;
+  const filters = parse_filters(searchParams);
+  if (filters instanceof NextResponse) return filters;
 
   const raw_suggest = searchParams.get("suggest");
   if (raw_suggest !== null) {
@@ -65,10 +89,10 @@ export async function GET(
       return error_response("Query parameter 'suggest' is invalid.", 400);
     }
     try {
-      const suggestions = await fetch_neighborhood_suggestions(prefix);
+      const suggestions = await fetch_neighborhood_suggestions(prefix, undefined, filters.city);
       return NextResponse.json({ suggestions });
     } catch (caught_error) {
-      console.error("[proximity] suggestion lookup failed:", caught_error);
+      report_error("[proximity] suggestion lookup failed", caught_error);
       return error_response("Unable to complete proximity lookup.", 500);
     }
   }
@@ -80,7 +104,7 @@ export async function GET(
       return error_response("Query parameter 'neighborhood' is invalid.", 400);
     }
     try {
-      const discovery = await fetch_neighborhood_discovery(neighborhood);
+      const discovery = await fetch_neighborhood_discovery(neighborhood, undefined, filters);
       if (!discovery) {
         return error_response(`No tracked neighborhood matches '${neighborhood}'.`, 404);
       }
@@ -96,7 +120,7 @@ export async function GET(
         origin_alternatives: discovery.origin_alternatives,
       });
     } catch (caught_error) {
-      console.error("[proximity] neighborhood lookup failed:", caught_error);
+      report_error("[proximity] neighborhood lookup failed", caught_error);
       return error_response("Unable to complete proximity lookup.", 500);
     }
   }
@@ -115,7 +139,7 @@ export async function GET(
 
   try {
     if (scope === "nearest") {
-      const results = await fetch_nearest_corporate_discovery(latitude, longitude);
+      const results = await fetch_nearest_corporate_discovery(latitude, longitude, undefined, filters);
       return NextResponse.json({
         origin: { kind: "coordinates", latitude, longitude },
         radius_meters: NEARBY_CORPORATE_RADIUS_METERS,
@@ -144,7 +168,7 @@ export async function GET(
     });
   } catch (caught_error) {
     // Log details server-side only; never leak internals to the client.
-    console.error("[proximity] lookup failed:", caught_error);
+    report_error("[proximity] lookup failed", caught_error);
     return error_response("Unable to complete proximity lookup.", 500);
   }
 }

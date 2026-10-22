@@ -2,6 +2,7 @@ import type { Pool as PgPool } from "pg";
 import { get_database_pool } from "@/lib/db/pool";
 import type {
   AlternativeRecommendation,
+  CatalogResponse,
   CorporateTarget,
   CorporateTier,
   IndustryVertical,
@@ -23,12 +24,24 @@ export const MAX_RECOMMENDATIONS = 25;
 /** Standard average walking pace (~4.8 km/h) used for the display estimate only. */
 const WALKING_METERS_PER_MINUTE = 80;
 
+/**
+ * Optional scope for discovery queries. null means "no restriction": a neighborhood
+ * search has no brand context, so it spans every vertical unless the user narrows it.
+ */
+export interface DiscoveryFilters {
+  industry_vertical: IndustryVertical | null;
+  city: string | null;
+}
+
+export const NO_DISCOVERY_FILTERS: DiscoveryFilters = { industry_vertical: null, city: null };
+
 /** A Tier 1/2 storefront resolved from the database. */
 export interface CorporateLocationRecord {
   location_id: string;
   brand_name: string;
   corporate_tier: 1 | 2;
   parent_entity: string;
+  financial_backers: string[];
   industry_vertical: IndustryVertical;
   address: string;
   neighborhood: string | null;
@@ -47,6 +60,7 @@ interface CorporateLocationRow {
   brand_name: string;
   corporate_tier: number;
   parent_entity: string;
+  financial_backers: string[] | null;
   industry_vertical: IndustryVertical;
   address: string;
   neighborhood: string | null;
@@ -70,6 +84,7 @@ const CORPORATE_LOCATION_COLUMNS = `
   b.name AS brand_name,
   b.corporate_tier,
   b.parent_entity,
+  b.financial_backers,
   b.industry_vertical,
   l.address,
   l.neighborhood,
@@ -82,6 +97,7 @@ function to_corporate_record(row: CorporateLocationRow): CorporateLocationRecord
     brand_name: row.brand_name,
     corporate_tier: row.corporate_tier as CorporateTier as 1 | 2,
     parent_entity: row.parent_entity,
+    financial_backers: row.financial_backers ?? [],
     industry_vertical: row.industry_vertical,
     address: row.address,
     neighborhood: row.neighborhood,
@@ -161,13 +177,13 @@ export async function fetch_corporate_location_at_point(
 
 /**
  * Core proximity query: Tier 3 locations in the same industry vertical within
- * 1500m of the point, strictly closest first. Distances are geodesic
+ * 1500m of the point, strictly closest first (null vertical = every vertical). Distances are geodesic
  * (ST_Distance on geography, meters), not routed street distance.
  */
 export async function fetch_nearby_independent_alternatives(
   latitude: number,
   longitude: number,
-  industry_vertical: IndustryVertical,
+  industry_vertical: IndustryVertical | null,
   pool: Pool = get_database_pool(),
 ): Promise<MappedAlternative[]> {
   const result = await pool.query<AlternativeRow>(
@@ -184,7 +200,7 @@ export async function fetch_nearby_independent_alternatives(
        FROM locations l
        JOIN brands b ON b.id = l.brand_id
       WHERE b.corporate_tier = 3
-        AND b.industry_vertical = $3
+        AND ($3::industry_vertical IS NULL OR b.industry_vertical = $3::industry_vertical)
         AND ST_DWithin(
               l.coordinates::geography,
               ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
@@ -227,6 +243,7 @@ function to_corporate_target(candidate: CorporateCandidate): CorporateTarget {
     brand_name: record.brand_name,
     corporate_tier: record.corporate_tier,
     parent_entity: record.parent_entity,
+    financial_backers: record.financial_backers,
     address: record.address,
     neighborhood: record.neighborhood,
     latitude: record.latitude,
@@ -264,6 +281,7 @@ export async function fetch_nearest_corporate_discovery(
   latitude: number,
   longitude: number,
   pool: Pool = get_database_pool(),
+  filters: DiscoveryFilters = NO_DISCOVERY_FILTERS,
 ): Promise<NearbyCorporateResult[]> {
   const result = await pool.query<CorporateLocationRow & { distance_meters: number }>(
     `SELECT ${CORPORATE_LOCATION_COLUMNS},
@@ -273,13 +291,22 @@ export async function fetch_nearest_corporate_discovery(
        FROM locations l
        JOIN brands b ON b.id = l.brand_id
       WHERE b.corporate_tier IN (1, 2)
+        AND ($5::industry_vertical IS NULL OR b.industry_vertical = $5::industry_vertical)
+        AND ($6::text IS NULL OR l.city = $6)
         AND ST_DWithin(
               l.coordinates::geography,
               ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
               $3)
       ORDER BY distance_meters ASC
       LIMIT $4`,
-    [latitude, longitude, NEARBY_CORPORATE_RADIUS_METERS, MAX_NEARBY_CORPORATE_RESULTS],
+    [
+      latitude,
+      longitude,
+      NEARBY_CORPORATE_RADIUS_METERS,
+      MAX_NEARBY_CORPORATE_RESULTS,
+      filters.industry_vertical,
+      filters.city,
+    ],
   );
   return attach_independent_alternatives(
     result.rows.map((row) => ({
@@ -299,6 +326,7 @@ export async function fetch_neighborhood_corporate_discovery(
   neighborhood: string,
   pool: Pick<PgPool, "query"> = get_database_pool(),
   boundary_ids: string[] = [],
+  filters: DiscoveryFilters = NO_DISCOVERY_FILTERS,
 ): Promise<NearbyCorporateResult[]> {
   const spatial = boundary_ids.length > 0;
   const neighborhood_filter = spatial
@@ -310,10 +338,12 @@ export async function fetch_neighborhood_corporate_discovery(
        FROM locations l
        JOIN brands b ON b.id = l.brand_id
       WHERE b.corporate_tier IN (1, 2)
+        AND ($3::industry_vertical IS NULL OR b.industry_vertical = $3::industry_vertical)
+        AND ($4::text IS NULL OR l.city = $4)
         AND ${neighborhood_filter}
       ORDER BY b.name, l.address
       LIMIT $2`,
-    [spatial ? boundary_ids : neighborhood, MAX_NEARBY_CORPORATE_RESULTS],
+    [spatial ? boundary_ids : neighborhood, MAX_NEARBY_CORPORATE_RESULTS, filters.industry_vertical, filters.city],
   );
   return attach_independent_alternatives(
     result.rows.map((row) => ({ record: to_corporate_record(row), distance_meters: null })),
@@ -321,19 +351,39 @@ export async function fetch_neighborhood_corporate_discovery(
   );
 }
 
+/** Cities and verticals that have at least one tracked storefront (drives the UI selectors). */
+export async function fetch_catalog(pool: Pool = get_database_pool()): Promise<CatalogResponse> {
+  const [cities, verticals] = await Promise.all([
+    pool.query<{ city: string }>("SELECT DISTINCT city FROM locations ORDER BY city"),
+    pool.query<{ industry_vertical: IndustryVertical }>(
+      `SELECT DISTINCT b.industry_vertical
+         FROM brands b
+         JOIN locations l ON l.brand_id = b.id
+        ORDER BY b.industry_vertical`,
+    ),
+  ]);
+  return {
+    cities: cities.rows.map((row) => row.city),
+    verticals: verticals.rows.map((row) => row.industry_vertical),
+  };
+}
+
 /** Distinct neighborhoods with at least one tracked storefront, for the fallback menu. */
-export async function fetch_neighborhoods(pool: Pool = get_database_pool()): Promise<string[]> {
+export async function fetch_neighborhoods(
+  pool: Pool = get_database_pool(),
+  city: string | null = null,
+): Promise<string[]> {
   const result = await pool.query<{ neighborhood: string }>(
     `SELECT DISTINCT neighborhood
        FROM locations
       WHERE neighborhood IS NOT NULL
+        AND ($1::text IS NULL OR city = $1)
       ORDER BY neighborhood`,
+    [city],
   );
   return result.rows.map((row) => row.neighborhood);
 }
 
-/** Neighborhood search has no brand context, so it defaults to the launch vertical. */
-export const DEFAULT_INDUSTRY_VERTICAL: IndustryVertical = "coffee_bakery";
 export const MAX_NEIGHBORHOOD_SUGGESTIONS = 8;
 
 export interface NeighborhoodCentroid {
@@ -379,6 +429,7 @@ interface BoundaryCentroidRow {
 async function fetch_boundary_centroid(
   neighborhood: string,
   pool: Pick<PgPool, "query">,
+  city: string | null,
 ): Promise<NeighborhoodCentroid | null> {
   const result = await pool.query<BoundaryCentroidRow>(
     `WITH term AS (SELECT lower(btrim($1)) AS t),
@@ -390,6 +441,7 @@ async function fetch_boundary_centroid(
                 WHEN strpos(lower(b.name), '-' || term.t) > 0 THEN strpos(lower(b.name), '-' || term.t) + 1
               END AS match_pos
          FROM neighborhood_boundaries b CROSS JOIN term
+        WHERE ($3::text IS NULL OR b.city = $3)
      ),
      matched AS (
        SELECT p.*,
@@ -415,19 +467,27 @@ async function fetch_boundary_centroid(
               min(match_rank) AS match_rank,
               ST_Collect(geometry) AS geom
          FROM chosen
+     ),
+     labelled AS (
+       -- A centroid can fall outside a concave or multi-part shape; use a point
+       -- guaranteed to lie inside the polygons in that case.
+       SELECT combined.*,
+              CASE WHEN ST_Covers(geom, ST_Centroid(geom)) THEN ST_Centroid(geom)
+                   ELSE ST_PointOnSurface(geom) END AS label_point
+         FROM combined
      )
      SELECT boundary_ids,
             display_name,
-            ST_Y(ST_Centroid(geom)) AS latitude,
-            ST_X(ST_Centroid(geom)) AS longitude,
+            ST_Y(label_point) AS latitude,
+            ST_X(label_point) AS longitude,
             CASE WHEN match_rank = 1 THEN 0 ELSE
               ST_Distance(
                 ST_SetSRID(ST_MakePoint(ST_XMin(geom), ST_YMin(geom)), 4326)::geography,
                 ST_SetSRID(ST_MakePoint(ST_XMax(geom), ST_YMax(geom)), 4326)::geography)
             END AS span_meters
-       FROM combined
+       FROM labelled
       WHERE boundary_ids IS NOT NULL`,
-    [neighborhood, MIN_PARTIAL_NEIGHBORHOOD_TERM_LENGTH],
+    [neighborhood, MIN_PARTIAL_NEIGHBORHOOD_TERM_LENGTH, city],
   );
   const row = result.rows[0];
   if (!row || Number(row.span_meters) > MAX_NEIGHBORHOOD_SPAN_METERS) return null;
@@ -448,8 +508,9 @@ async function fetch_boundary_centroid(
 export async function fetch_neighborhood_centroid(
   neighborhood: string,
   pool: Pick<PgPool, "query"> = get_database_pool(),
+  city: string | null = null,
 ): Promise<NeighborhoodCentroid | null> {
-  const from_boundary = await fetch_boundary_centroid(neighborhood, pool);
+  const from_boundary = await fetch_boundary_centroid(neighborhood, pool, city);
   if (from_boundary) return from_boundary;
 
   const result = await pool.query<{
@@ -461,8 +522,9 @@ export async function fetch_neighborhood_centroid(
             ST_Y(ST_Centroid(ST_Collect(l.coordinates))) AS latitude,
             ST_X(ST_Centroid(ST_Collect(l.coordinates))) AS longitude
        FROM locations l
-      WHERE lower(l.neighborhood) = lower($1)`,
-    [neighborhood],
+      WHERE lower(l.neighborhood) = lower($1)
+        AND ($2::text IS NULL OR l.city = $2)`,
+    [neighborhood, city],
   );
   const row = result.rows[0];
   if (!row || row.latitude === null || row.longitude === null) return null;
@@ -482,20 +544,22 @@ export async function fetch_neighborhood_centroid(
 export async function fetch_neighborhood_discovery(
   neighborhood: string,
   pool: Pool = get_database_pool(),
+  filters: DiscoveryFilters = NO_DISCOVERY_FILTERS,
 ): Promise<NeighborhoodDiscovery | null> {
-  const centroid = await fetch_neighborhood_centroid(neighborhood, pool);
+  const centroid = await fetch_neighborhood_centroid(neighborhood, pool, filters.city);
   if (!centroid) return null;
 
   const origin_alternatives = await fetch_nearby_independent_alternatives(
     centroid.latitude,
     centroid.longitude,
-    DEFAULT_INDUSTRY_VERTICAL,
+    filters.industry_vertical,
     pool,
   );
   const results = await fetch_neighborhood_corporate_discovery(
     centroid.neighborhood,
     pool,
     centroid.boundary_ids,
+    filters,
   );
   return { centroid, results, origin_alternatives };
 }
@@ -508,6 +572,7 @@ export async function fetch_neighborhood_discovery(
 export async function fetch_neighborhood_suggestions(
   prefix: string,
   pool: Pick<PgPool, "query"> = get_database_pool(),
+  city: string | null = null,
 ): Promise<string[]> {
   const term = prefix.trim().toLowerCase();
   if (term.length === 0) return [];
@@ -518,17 +583,19 @@ export async function fetch_neighborhood_suggestions(
          SELECT neighborhood AS name, 0 AS priority
            FROM locations
           WHERE neighborhood IS NOT NULL AND starts_with(lower(neighborhood), $1)
+            AND ($4::text IS NULL OR city = $4)
          UNION ALL
          SELECT name, 1
            FROM neighborhood_boundaries
-          WHERE starts_with(lower(name), $1)
-             OR (length($1) >= $3
-                 AND (strpos(lower(name), ' ' || $1) > 0 OR strpos(lower(name), '-' || $1) > 0))
+          WHERE ($4::text IS NULL OR city = $4)
+            AND (starts_with(lower(name), $1)
+                 OR (length($1) >= $3
+                     AND (strpos(lower(name), ' ' || $1) > 0 OR strpos(lower(name), '-' || $1) > 0)))
        ) matches
       GROUP BY name
       ORDER BY min(priority), name
       LIMIT $2`,
-    [term, MAX_NEIGHBORHOOD_SUGGESTIONS, MIN_PARTIAL_NEIGHBORHOOD_TERM_LENGTH],
+    [term, MAX_NEIGHBORHOOD_SUGGESTIONS, MIN_PARTIAL_NEIGHBORHOOD_TERM_LENGTH, city],
   );
   return result.rows.map((row) => row.name);
 }
