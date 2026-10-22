@@ -6,6 +6,8 @@ import type {
   CorporateTarget,
   CorporateTier,
   IndustryVertical,
+  MarketStatus,
+  MarketSummary,
   NearbyCorporateResult,
 } from "@/lib/types";
 
@@ -21,6 +23,8 @@ export const SEARCH_RADIUS_METERS = 1500;
 /** Max gap between a queried point and a known storefront to count as the same place. */
 export const TARGET_MATCH_TOLERANCE_METERS = 50;
 export const MAX_RECOMMENDATIONS = 25;
+/** A market covers every point within 50 miles of its geographic center. */
+export const MARKET_RADIUS_METERS = 80_467;
 /** Standard average walking pace (~4.8 km/h) used for the display estimate only. */
 const WALKING_METERS_PER_MINUTE = 80;
 
@@ -31,9 +35,11 @@ const WALKING_METERS_PER_MINUTE = 80;
 export interface DiscoveryFilters {
   industry_vertical: IndustryVertical | null;
   city: string | null;
+  /** Restricts results to one regional market (null = no restriction). */
+  market_id: string | null;
 }
 
-export const NO_DISCOVERY_FILTERS: DiscoveryFilters = { industry_vertical: null, city: null };
+export const NO_DISCOVERY_FILTERS: DiscoveryFilters = { industry_vertical: null, city: null, market_id: null };
 
 /** A Tier 1/2 storefront resolved from the database. */
 export interface CorporateLocationRecord {
@@ -43,6 +49,7 @@ export interface CorporateLocationRecord {
   parent_entity: string;
   financial_backers: string[];
   industry_vertical: IndustryVertical;
+  market_id: string;
   address: string;
   neighborhood: string | null;
   latitude: number;
@@ -62,6 +69,7 @@ interface CorporateLocationRow {
   parent_entity: string;
   financial_backers: string[] | null;
   industry_vertical: IndustryVertical;
+  market_id: string;
   address: string;
   neighborhood: string | null;
   latitude: number;
@@ -86,6 +94,7 @@ const CORPORATE_LOCATION_COLUMNS = `
   b.parent_entity,
   b.financial_backers,
   b.industry_vertical,
+  l.market_id,
   l.address,
   l.neighborhood,
   ST_Y(l.coordinates) AS latitude,
@@ -99,6 +108,7 @@ function to_corporate_record(row: CorporateLocationRow): CorporateLocationRecord
     parent_entity: row.parent_entity,
     financial_backers: row.financial_backers ?? [],
     industry_vertical: row.industry_vertical,
+    market_id: row.market_id,
     address: row.address,
     neighborhood: row.neighborhood,
     latitude: Number(row.latitude),
@@ -150,17 +160,22 @@ export async function fetch_corporate_location_by_address(
   return row ? to_corporate_record(row) : null;
 }
 
-/** Resolves the Tier 1/2 storefront nearest to a point (within tolerance). */
+/**
+ * Resolves the Tier 1/2 storefront nearest to a point (within tolerance). An optional
+ * vertical picks between co-located storefronts of different industries.
+ */
 export async function fetch_corporate_location_at_point(
   latitude: number,
   longitude: number,
   pool: Pool = get_database_pool(),
+  industry_vertical: IndustryVertical | null = null,
 ): Promise<CorporateLocationRecord | null> {
   const result = await pool.query<CorporateLocationRow>(
     `SELECT ${CORPORATE_LOCATION_COLUMNS}
        FROM locations l
        JOIN brands b ON b.id = l.brand_id
       WHERE b.corporate_tier IN (1, 2)
+        AND ($4::industry_vertical IS NULL OR b.industry_vertical = $4::industry_vertical)
         AND ST_DWithin(
               l.coordinates::geography,
               ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
@@ -169,7 +184,7 @@ export async function fetch_corporate_location_at_point(
               l.coordinates::geography,
               ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography)
       LIMIT 1`,
-    [latitude, longitude, TARGET_MATCH_TOLERANCE_METERS],
+    [latitude, longitude, TARGET_MATCH_TOLERANCE_METERS, industry_vertical],
   );
   const row = result.rows[0];
   return row ? to_corporate_record(row) : null;
@@ -185,6 +200,7 @@ export async function fetch_nearby_independent_alternatives(
   longitude: number,
   industry_vertical: IndustryVertical | null,
   pool: Pool = get_database_pool(),
+  market_id: string | null = null,
 ): Promise<MappedAlternative[]> {
   const result = await pool.query<AlternativeRow>(
     `SELECT l.id AS location_id,
@@ -201,13 +217,14 @@ export async function fetch_nearby_independent_alternatives(
        JOIN brands b ON b.id = l.brand_id
       WHERE b.corporate_tier = 3
         AND ($3::industry_vertical IS NULL OR b.industry_vertical = $3::industry_vertical)
+        AND ($6::uuid IS NULL OR l.market_id = $6::uuid)
         AND ST_DWithin(
               l.coordinates::geography,
               ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
               $4)
       ORDER BY distance_meters ASC
       LIMIT $5`,
-    [latitude, longitude, industry_vertical, SEARCH_RADIUS_METERS, MAX_RECOMMENDATIONS],
+    [latitude, longitude, industry_vertical, SEARCH_RADIUS_METERS, MAX_RECOMMENDATIONS, market_id],
   );
   return result.rows.map(map_to_alternative);
 }
@@ -267,6 +284,7 @@ async function attach_independent_alternatives(
         candidate.record.longitude,
         candidate.record.industry_vertical,
         pool,
+        candidate.record.market_id,
       ),
     });
   }
@@ -293,6 +311,7 @@ export async function fetch_nearest_corporate_discovery(
       WHERE b.corporate_tier IN (1, 2)
         AND ($5::industry_vertical IS NULL OR b.industry_vertical = $5::industry_vertical)
         AND ($6::text IS NULL OR l.city = $6)
+        AND ($7::uuid IS NULL OR l.market_id = $7::uuid)
         AND ST_DWithin(
               l.coordinates::geography,
               ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography,
@@ -306,6 +325,7 @@ export async function fetch_nearest_corporate_discovery(
       MAX_NEARBY_CORPORATE_RESULTS,
       filters.industry_vertical,
       filters.city,
+      filters.market_id,
     ],
   );
   return attach_independent_alternatives(
@@ -340,15 +360,70 @@ export async function fetch_neighborhood_corporate_discovery(
       WHERE b.corporate_tier IN (1, 2)
         AND ($3::industry_vertical IS NULL OR b.industry_vertical = $3::industry_vertical)
         AND ($4::text IS NULL OR l.city = $4)
+        AND ($5::uuid IS NULL OR l.market_id = $5::uuid)
         AND ${neighborhood_filter}
       ORDER BY b.name, l.address
       LIMIT $2`,
-    [spatial ? boundary_ids : neighborhood, MAX_NEARBY_CORPORATE_RESULTS, filters.industry_vertical, filters.city],
+    [spatial ? boundary_ids : neighborhood, MAX_NEARBY_CORPORATE_RESULTS, filters.industry_vertical, filters.city, filters.market_id],
   );
   return attach_independent_alternatives(
     result.rows.map((row) => ({ record: to_corporate_record(row), distance_meters: null })),
     pool,
   );
+}
+
+interface MarketRow {
+  id: string;
+  city_name: string;
+  status: MarketStatus;
+  latitude: number;
+  longitude: number;
+  distance_meters: number;
+}
+
+export interface MarketResolution {
+  /** The closest active market (null only when no market is active). */
+  closest_active_market: MarketSummary | null;
+  /** True when the point is within MARKET_RADIUS_METERS (50 miles) of that market. */
+  within_market: boolean;
+}
+
+/**
+ * Finds the closest ACTIVE market to a point and whether the point lies inside its
+ * 50-mile radius. Run before any local proximity search.
+ */
+export async function fetch_market_for_point(
+  latitude: number,
+  longitude: number,
+  pool: Pool = get_database_pool(),
+): Promise<MarketResolution> {
+  const result = await pool.query<MarketRow>(
+    `SELECT id, city_name, status,
+            ST_Y(geographic_center) AS latitude,
+            ST_X(geographic_center) AS longitude,
+            ST_Distance(
+              geographic_center::geography,
+              ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography) AS distance_meters
+       FROM markets
+      WHERE status = 'active'
+      ORDER BY distance_meters ASC
+      LIMIT 1`,
+    [latitude, longitude],
+  );
+  const row = result.rows[0];
+  if (!row) return { closest_active_market: null, within_market: false };
+  const closest_active_market: MarketSummary = {
+    id: row.id,
+    city_name: row.city_name,
+    status: row.status,
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+    distance_meters: Math.round(Number(row.distance_meters)),
+  };
+  return {
+    closest_active_market,
+    within_market: closest_active_market.distance_meters <= MARKET_RADIUS_METERS,
+  };
 }
 
 /** Cities and verticals that have at least one tracked storefront (drives the UI selectors). */
@@ -554,6 +629,7 @@ export async function fetch_neighborhood_discovery(
     centroid.longitude,
     filters.industry_vertical,
     pool,
+    filters.market_id,
   );
   const results = await fetch_neighborhood_corporate_discovery(
     centroid.neighborhood,

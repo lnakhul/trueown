@@ -1,7 +1,7 @@
 # Deployment checklist (Vercel + Supabase)
 
 ## 1. Supabase (already done for the current project)
-- Migrations applied in filename order, including `20261021000000_reputable_news_source.sql` and `20261022000000_brand_financial_backers.sql`. **Apply the latter before deploying code that includes it**; the proximity queries select `brands.financial_backers`.
+- Migrations applied in filename order, including `20261021000000_reputable_news_source.sql` and `20261022000000_brand_financial_backers.sql`, and `20261023000000_03_regional_markets.sql` (apply it before deploying code that includes it; it backfills `locations.market_id`). **Apply the latter before deploying code that includes it**; the proximity queries select `brands.financial_backers`.
 - `npm run db:import:boundaries -- --yes` run against the hosted database (262 NTA polygons).
 - An admin user exists with `app_metadata.role = 'admin'`.
 - Use the **session pooler** connection string for `DATABASE_URL` (IPv4-compatible).

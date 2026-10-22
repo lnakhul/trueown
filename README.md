@@ -68,6 +68,8 @@ Never put the Supabase service-role key in client code.
 
 Migrations live in `supabase/migrations/` and run in filename order; `supabase/seed.sql` holds sample data. On hosted Supabase, paste each file's **contents** into the SQL Editor, in order. Create an admin user in Supabase Auth and mark it as an admin as described in the RLS migration.
 
+**Markets.** The `markets` table lists the cities TrueOwn serves (`active` or `coming_soon`, each with a geographic center). Every location is assigned to the market whose center is within 50 miles, and inserts outside every market are rejected, so add a market before importing a new city. `GET /api/proximity` resolves the nearest active market first; outside 50 miles of every active one it returns `{ "status": "outside_active_market", "closest_active_market": { ... } }`. Searches that start from a location (`scope=nearest`, `neighborhood=`) require `vertical=<industry_vertical>` and are isolated to that vertical and market.
+
 ## Importing data
 
 All importers support `--dry-run` (validate and roll back) and require `--yes` for non-local databases. They are all-or-nothing.

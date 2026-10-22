@@ -21,6 +21,7 @@ import type {
   NearbyResponse,
   NeighborhoodSuggestionsResponse,
   NeighborhoodsResponse,
+  OutsideMarketResponse,
 } from "@/lib/types";
 
 /** Leaflet touches `window`, so the map must render client-side only. */
@@ -36,6 +37,7 @@ type FetchState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "error"; message: string }
+  | { status: "outside_market"; payload: OutsideMarketResponse }
   | { status: "success"; payload: NearbyResponse };
 
 const TIER_ALERT_LABEL: Record<1 | 2, string> = {
@@ -51,13 +53,13 @@ const GEOLOCATION_OPTIONS: PositionOptions = {
 
 const SUGGESTION_DEBOUNCE_MS = 200;
 
-/** "" means "all" in the selectors. */
+/** The API requires a vertical; "" for city means every city. */
 interface DiscoveryScope {
-  vertical: IndustryVertical | "";
+  vertical: IndustryVertical;
   city: string;
 }
 
-const ALL_SCOPE: DiscoveryScope = { vertical: "", city: "" };
+const DEFAULT_SCOPE: DiscoveryScope = { vertical: "coffee_bakery", city: "" };
 
 /** Where the current results are anchored; filters are layered on top when requesting. */
 type DiscoveryOrigin =
@@ -65,11 +67,9 @@ type DiscoveryOrigin =
   | { kind: "neighborhood"; name: string };
 
 function build_scope_params(scope: DiscoveryScope): string {
-  const params = new URLSearchParams();
-  if (scope.vertical) params.set("vertical", scope.vertical);
+  const params = new URLSearchParams({ vertical: scope.vertical });
   if (scope.city) params.set("city", scope.city);
-  const query = params.toString();
-  return query ? `&${query}` : "";
+  return `&${params.toString()}`;
 }
 
 function build_discovery_url(origin: DiscoveryOrigin, scope: DiscoveryScope): string {
@@ -80,7 +80,8 @@ function build_discovery_url(origin: DiscoveryOrigin, scope: DiscoveryScope): st
   return base + build_scope_params(scope);
 }
 
-const is_default_scope = (scope: DiscoveryScope): boolean => scope.vertical === "" && scope.city === "";
+const is_default_scope = (scope: DiscoveryScope): boolean =>
+  scope.vertical === DEFAULT_SCOPE.vertical && scope.city === DEFAULT_SCOPE.city;
 
 /** Explicit icon placeholder for the Navigate action. */
 function NavigateIcon() {
@@ -219,10 +220,9 @@ function ScopeSelectors({ catalog, scope, on_change }: ScopeSelectorsProps) {
         Type of business
         <select
           value={scope.vertical}
-          onChange={(event) => on_change({ ...scope, vertical: event.target.value as DiscoveryScope["vertical"] })}
+          onChange={(event) => on_change({ ...scope, vertical: event.target.value as IndustryVertical })}
           className={`${SELECT_CLASSES} mt-1`}
         >
-          <option value="">All types</option>
           {catalog.verticals.map((vertical) => (
             <option key={vertical} value={vertical}>
               {VERTICAL_LABELS[vertical]}
@@ -317,9 +317,9 @@ export default function DiscoveryDashboard() {
   const [suggestions, set_suggestions] = useState<string[]>([]);
   const [is_panel_open, set_is_panel_open] = useState(false);
   const [catalog, set_catalog] = useState<CatalogResponse | null>(null);
-  const [scope, set_scope] = useState<DiscoveryScope>(ALL_SCOPE);
+  const [scope, set_scope] = useState<DiscoveryScope>(DEFAULT_SCOPE);
   // Mirrors `scope` so stable callbacks (e.g. the location request) always read the latest value.
-  const scope_ref = useRef<DiscoveryScope>(ALL_SCOPE);
+  const scope_ref = useRef<DiscoveryScope>(DEFAULT_SCOPE);
   const [active_suggestion, set_active_suggestion] = useState(-1);
 
   const enter_fallback = useCallback((notice: string | null) => {
@@ -453,7 +453,11 @@ export default function DiscoveryDashboard() {
       try {
         const response = await fetch(url, { signal: abort_controller.signal });
         if (!response.ok) throw new Error(await read_error_message(response));
-        const payload = (await response.json()) as NearbyResponse;
+        const payload = (await response.json()) as NearbyResponse | OutsideMarketResponse;
+        if ("status" in payload) {
+          set_fetch_state({ status: "outside_market", payload });
+          return;
+        }
 
         const storage = get_browser_storage();
         // Only unscoped results are cached: the cache is restored without its scope.
@@ -708,6 +712,18 @@ export default function DiscoveryDashboard() {
           <p className="text-sm text-zinc-600" role="status">
             Finding independent alternatives…
           </p>
+        )}
+        {fetch_state.status === "outside_market" && (
+          <div role="status" className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-4 text-sm text-zinc-700">
+            <p className="font-medium text-zinc-900">TrueOwn isn&apos;t available at your location yet.</p>
+            <p className="mt-1">
+              {fetch_state.payload.closest_active_market
+                ? `The closest active city is ${fetch_state.payload.closest_active_market.city_name}, about ${Math.round(
+                    fetch_state.payload.closest_active_market.distance_meters / 1609.344,
+                  ).toLocaleString()} miles away. Try a neighborhood there instead.`
+                : "No cities are active yet."}
+            </p>
+          </div>
         )}
         {fetch_state.status === "error" && (
           <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-700">

@@ -29,11 +29,12 @@ The import is **all-or-nothing**: any invalid row, tier conflict or database err
 | `ownership_verified_on` | yes | Date you checked the source, `YYYY-MM-DD`, not in the future. |
 | `address` | yes | Full street address. A brand cannot have the same address twice. |
 | `neighborhood` | no | Blank = derived from the NYC neighborhood polygon containing the point (recommended). |
-| `city` | no | Defaults to `New York`. |
-| `latitude` / `longitude` | yes | Decimal degrees (e.g. `40.7324`, `-74.0021`). Must fall inside a New York neighborhood boundary (100 m shoreline tolerance), which catches swapped values. |
+| `city` | no | Defaults to `New York`. The storefront's coordinates must be within 50 miles of a row in the `markets` table (otherwise the row is rejected); a market that is `coming_soon` is stored but not served. |
+| `latitude` / `longitude` | yes | Decimal degrees (e.g. `40.7324`, `-74.0021`). For cities with loaded neighborhood boundaries (NYC) the point must fall inside one (100 m shoreline tolerance), which catches swapped values. |
 
 ## Notes
 
+- Any `industry_vertical` can be loaded (`restaurant`, `bar_nightlife`, `retail_boutique`, `fitness_wellness`, ...). Discovery only pairs a corporate storefront with independents of the **same** vertical.
 - Existing brands are updated (parent, source, verification date), but a **tier change is never applied silently**: the import stops so it can be resolved by hand.
 - Re-running the same file is safe: storefronts that already exist are skipped.
 - Quote any cell containing a comma, e.g. `"186 W 4th St, New York, NY 10014"`.

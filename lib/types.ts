@@ -75,6 +75,28 @@ export interface NearbyResponse {
   origin_alternatives: AlternativeRecommendation[];
 }
 
+export type MarketStatus = "active" | "coming_soon";
+
+/** A regional market (city) and its straight-line distance from a queried point. */
+export interface MarketSummary {
+  id: string;
+  city_name: string;
+  status: MarketStatus;
+  latitude: number;
+  longitude: number;
+  distance_meters: number;
+}
+
+/**
+ * Returned (HTTP 200) when the coordinates are not within 50 miles of any active
+ * market. `closest_active_market` is null only when no market is active at all.
+ */
+export interface OutsideMarketResponse {
+  status: "outside_active_market";
+  message: string;
+  closest_active_market: MarketSummary | null;
+}
+
 /** Cities and verticals that currently have tracked storefronts, for the selectors. */
 export interface CatalogResponse {
   cities: string[];
