@@ -8,6 +8,7 @@ import {
   SEARCH_RADIUS_METERS,
   fetch_corporate_location_by_address,
   fetch_nearby_independent_alternatives,
+  fetch_catalog,
   fetch_neighborhood_centroid,
   fetch_neighborhood_suggestions,
 } from "@/lib/db/proximity";
@@ -256,4 +257,63 @@ describe("neighborhood text fallback: centroid origin + 1500m search", () => {
     expect(suggestions[0]).toBe("Greenwich Village");
     expect((await call_proximity("?suggest=%20")).status).toBe(400);
   });
+});
+
+describe("city and vertical scope", () => {
+  test("neighborhood search spans every vertical when none is given", async () => {
+    const payload = (await (await call_proximity("?neighborhood=West%20Village")).json()) as NearbyResponse;
+    expect(payload.origin_alternatives.length).toBeGreaterThan(0);
+  });
+
+  test("a vertical with no storefronts returns nothing; the right one still matches", async () => {
+    const empty = (await (await call_proximity("?neighborhood=West%20Village&vertical=restaurant")).json()) as NearbyResponse;
+    expect(empty.results).toEqual([]);
+    expect(empty.origin_alternatives).toEqual([]);
+
+    const coffee = (await (await call_proximity("?neighborhood=West%20Village&vertical=coffee_bakery")).json()) as NearbyResponse;
+    expect(coffee.results.length).toBeGreaterThan(0);
+  });
+
+  test("nearest search honours the vertical filter", async () => {
+    const none = (await (await call_proximity("?scope=nearest&lat=40.7324&lng=-74.0021&vertical=bar_nightlife")).json()) as NearbyResponse;
+    expect(none.results).toEqual([]);
+  });
+
+  test("city scope narrows neighborhood matching and suggestions", async () => {
+    expect((await call_proximity("?neighborhood=West%20Village&city=New%20York")).status).toBe(200);
+    expect((await call_proximity("?neighborhood=West%20Village&city=Atlantis")).status).toBe(404);
+    const response = await call_proximity("?suggest=wes&city=Atlantis");
+    expect(((await response.json()) as { suggestions: string[] }).suggestions).toEqual([]);
+  });
+
+  test("malformed scope parameters are rejected, never widened", async () => {
+    expect((await call_proximity("?neighborhood=Astoria&vertical=bogus")).status).toBe(400);
+    expect((await call_proximity("?neighborhood=Astoria&city=%20")).status).toBe(400);
+    expect((await call_proximity(`?neighborhood=Astoria&city=${"x".repeat(101)}`)).status).toBe(400);
+  });
+
+  test("catalog lists the cities and verticals that have storefronts", async () => {
+    const catalog = await fetch_catalog(test_pool);
+    expect(catalog.cities).toContain("New York City");
+    expect(catalog.verticals).toContain("coffee_bakery");
+  });
+});
+
+describe("neighborhood label point", () => {
+  test("every boundary name resolves to a point inside its own polygons", async () => {
+    const names = await test_pool.query<{ name: string }>("SELECT DISTINCT name FROM neighborhood_boundaries");
+    expect(names.rows.length).toBeGreaterThan(200);
+    const outside: string[] = [];
+    for (const { name } of names.rows) {
+      const centroid = await fetch_neighborhood_centroid(name, test_pool);
+      if (!centroid) continue;
+      const inside = await test_pool.query<{ covered: boolean }>(
+        `SELECT bool_or(ST_Covers(geometry, ST_SetSRID(ST_MakePoint($2, $1), 4326))) AS covered
+           FROM neighborhood_boundaries WHERE id = ANY($3::uuid[])`,
+        [centroid.latitude, centroid.longitude, centroid.boundary_ids],
+      );
+      if (!inside.rows[0]?.covered) outside.push(name);
+    }
+    expect(outside).toEqual([]);
+  }, 60_000);
 });

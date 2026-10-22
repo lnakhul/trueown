@@ -45,4 +45,4 @@ Example Roasters,coffee_bakery,3,,Family-run roaster since 1987,nys_dos_corporat
 
 ## Brand-only file
 
-`brands_template.csv` is the header for `npm run db:import:brands`: one row per brand, no storefronts. `financial_backers` is accepted but not stored. Keep unsourced working files out of git (`data/**/vetted_*.csv` and `*_draft.csv` are ignored).
+`brands_template.csv` is the header for `npm run db:import:brands`: one row per brand, no storefronts. `financial_backers` is a comma- or semicolon-separated list of named investors (commas inside parentheses are kept; `none` means empty; Tier 3 rows are stored as none) and is shown on the Tier 1/2 alert banner, so only list investors you can cite. Keep unsourced working files out of git (`data/**/vetted_*.csv` and `*_draft.csv` are ignored).

@@ -5,18 +5,24 @@
 /** 1 = Majority PE buyout, 2 = VC / growth equity, 3 = True independent. */
 export type CorporateTier = 1 | 2 | 3;
 
-export type IndustryVertical =
-  | "coffee_bakery"
-  | "restaurant"
-  | "bar_nightlife"
-  | "retail_boutique"
-  | "fitness_wellness";
+/** Mirrors the `industry_vertical` Postgres enum; keep both in sync. */
+export const INDUSTRY_VERTICALS = [
+  "coffee_bakery",
+  "restaurant",
+  "bar_nightlife",
+  "retail_boutique",
+  "fitness_wellness",
+] as const;
+
+export type IndustryVertical = (typeof INDUSTRY_VERTICALS)[number];
 
 /** The corporate storefront currently being viewed. */
 export interface SelectedLocation {
   brand_name: string;
   corporate_tier: 1 | 2;
   parent_entity: string;
+  /** Named investors; empty when none are recorded. */
+  financial_backers: string[];
   address: string;
   latitude: number;
   longitude: number;
@@ -67,6 +73,12 @@ export interface NearbyResponse {
    * Always empty for coordinate origins.
    */
   origin_alternatives: AlternativeRecommendation[];
+}
+
+/** Cities and verticals that currently have tracked storefronts, for the selectors. */
+export interface CatalogResponse {
+  cities: string[];
+  verticals: IndustryVertical[];
 }
 
 export interface NeighborhoodsResponse {

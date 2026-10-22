@@ -1,3 +1,4 @@
+import { report_error } from "@/lib/monitoring";
 import { NextRequest, NextResponse } from "next/server";
 import { UUID_PATTERN } from "@/lib/approval";
 import { SubmissionNotPendingError, reject_pending_submission } from "@/lib/db/submissions";
@@ -26,7 +27,7 @@ export async function POST(
     if (caught_error instanceof SubmissionNotPendingError) {
       return error_response(caught_error.message, 409);
     }
-    console.error("[admin/reject] failed:", caught_error);
+    report_error("[admin/reject] failed", caught_error);
     return error_response("Unable to reject submission.", 500);
   }
 }

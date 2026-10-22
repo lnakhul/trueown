@@ -1,3 +1,4 @@
+import { report_error } from "@/lib/monitoring";
 import AdminVettingQueue from "@/components/AdminVettingQueue";
 import { get_supabase_config } from "@/lib/supabase/config";
 import { fetch_pending_submissions, type PendingSubmission } from "@/lib/db/submissions";
@@ -12,7 +13,7 @@ export default async function AdminPage() {
   try {
     pending_submissions = await fetch_pending_submissions();
   } catch (caught_error) {
-    console.error("[admin] failed to load pending submissions:", caught_error);
+    report_error("[admin] failed to load pending submissions", caught_error);
     load_error = "Unable to load the vetting queue. Check the database connection.";
   }
 

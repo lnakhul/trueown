@@ -1,7 +1,7 @@
 # Deployment checklist (Vercel + Supabase)
 
 ## 1. Supabase (already done for the current project)
-- Migrations applied in filename order, including `20261021000000_reputable_news_source.sql`.
+- Migrations applied in filename order, including `20261021000000_reputable_news_source.sql` and `20261022000000_brand_financial_backers.sql`. **Apply the latter before deploying code that includes it**; the proximity queries select `brands.financial_backers`.
 - `npm run db:import:boundaries -- --yes` run against the hosted database (262 NTA polygons).
 - An admin user exists with `app_metadata.role = 'admin'`.
 - Use the **session pooler** connection string for `DATABASE_URL` (IPv4-compatible).
@@ -23,6 +23,11 @@
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Public. Must be set at **build** time. |
 | `TURNSTILE_SECRET_KEY` | Server-only. Use the **rotated** secret. |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Server-only, optional. |
+| `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_DSN` | Optional error tracking. Unset = Sentry disabled. The public one must be set at **build** time. |
+| `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` | Optional, build-time only. Upload source maps when the token is set. |
+| `SENTRY_TRACES_SAMPLE_RATE`, `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE` | Optional, default `0.1`. |
+
+   Sentry events are scrubbed of query strings (which carry coordinates), cookies, headers, request bodies and user data before sending.
 
    Do **not** set `ADMIN_PASSWORD` in production: with Supabase configured, `/admin` uses Supabase Auth. Never add the service-role key.
 3. Deploy, then open the deployment URL and run the smoke test below.

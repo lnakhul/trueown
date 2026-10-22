@@ -1,3 +1,4 @@
+import { report_error } from "@/lib/monitoring";
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { get_database_pool } from "@/lib/db/pool";
@@ -97,7 +98,7 @@ export async function POST(
       }
       return NextResponse.json({ id: submission_id, status: "pending" }, { status: 201 });
     } catch (caught_error) {
-      console.error("[submissions] anon insert failed:", caught_error);
+      report_error("[submissions] anon insert failed", caught_error);
       return error_response("Submission could not be saved.", 500);
     }
   }
@@ -116,7 +117,7 @@ export async function POST(
     }
     return NextResponse.json({ id: created_row.id, status: "pending" }, { status: 201 });
   } catch (caught_error) {
-    console.error("[submissions] insert failed:", caught_error);
+    report_error("[submissions] insert failed", caught_error);
     return error_response("Submission could not be saved.", 500);
   }
 }

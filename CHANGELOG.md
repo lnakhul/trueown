@@ -4,6 +4,17 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+- Optional Sentry error tracking with PII scrubbing (disabled without a DSN).
+- City and business-type selectors; `GET /api/catalog`; `vertical` and `city` query parameters on the proximity and neighborhood APIs.
+- `brands.financial_backers` column (migration `20261022000000`), importer support and a "Backed by" line in the alert banner.
+- Accessibility pass: skip link, focus-visible styles, reduced-motion support, dialog focus trap, combobox neighborhood search, contrast and touch-target fixes.
+
+### Changed
+- Neighborhood search no longer defaults to `coffee_bakery`; it spans all verticals unless one is selected.
+- Neighborhood label points use `ST_PointOnSurface` when the centroid falls outside the polygon.
+- Geolocation cache key bumped to `v2`.
+
 ## [0.1.0] - 2026-10-21
 
 ### Added

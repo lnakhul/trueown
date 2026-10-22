@@ -1,6 +1,6 @@
 import { parse } from "csv-parse/sync";
 import type { Pool, PoolClient } from "pg";
-import type { IndustryVertical } from "@/lib/types";
+import { INDUSTRY_VERTICALS, type IndustryVertical } from "@/lib/types";
 import { validate_evidence_url } from "@/lib/validation";
 
 /** Exact header the importer accepts; mirrored by data/templates/venues_template.csv. */
@@ -22,13 +22,7 @@ export const VENUE_CSV_COLUMNS = [
 
 export type VenueCsvColumn = (typeof VENUE_CSV_COLUMNS)[number];
 
-export const INDUSTRY_VERTICALS: readonly IndustryVertical[] = [
-  "coffee_bakery",
-  "restaurant",
-  "bar_nightlife",
-  "retail_boutique",
-  "fitness_wellness",
-];
+export { INDUSTRY_VERTICALS };
 
 /**
  * Where each tier may be verified. Must stay in sync with the CHECK constraint on

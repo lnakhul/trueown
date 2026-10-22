@@ -1,8 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import SubmissionPanel from "@/components/SubmissionPanel";
+import { VERTICAL_LABELS } from "@/lib/catalog";
 import {
   GEOLOCATION_CACHE_TTL_MS,
   clear_cached_discovery,
@@ -13,7 +14,9 @@ import {
 import type {
   AlternativeRecommendation,
   ApiErrorResponse,
+  CatalogResponse,
   CorporateTarget,
+  IndustryVertical,
   NearbyCorporateResult,
   NearbyResponse,
   NeighborhoodSuggestionsResponse,
@@ -47,6 +50,37 @@ const GEOLOCATION_OPTIONS: PositionOptions = {
 };
 
 const SUGGESTION_DEBOUNCE_MS = 200;
+
+/** "" means "all" in the selectors. */
+interface DiscoveryScope {
+  vertical: IndustryVertical | "";
+  city: string;
+}
+
+const ALL_SCOPE: DiscoveryScope = { vertical: "", city: "" };
+
+/** Where the current results are anchored; filters are layered on top when requesting. */
+type DiscoveryOrigin =
+  | { kind: "coordinates"; latitude: string; longitude: string }
+  | { kind: "neighborhood"; name: string };
+
+function build_scope_params(scope: DiscoveryScope): string {
+  const params = new URLSearchParams();
+  if (scope.vertical) params.set("vertical", scope.vertical);
+  if (scope.city) params.set("city", scope.city);
+  const query = params.toString();
+  return query ? `&${query}` : "";
+}
+
+function build_discovery_url(origin: DiscoveryOrigin, scope: DiscoveryScope): string {
+  const base =
+    origin.kind === "coordinates"
+      ? `/api/proximity?scope=nearest&lat=${origin.latitude}&lng=${origin.longitude}`
+      : `/api/proximity?neighborhood=${encodeURIComponent(origin.name)}`;
+  return base + build_scope_params(scope);
+}
+
+const is_default_scope = (scope: DiscoveryScope): boolean => scope.vertical === "" && scope.city === "";
 
 /** Explicit icon placeholder for the Navigate action. */
 function NavigateIcon() {
@@ -103,11 +137,16 @@ function AlternativesSlider({ heading, alternatives }: AlternativesSliderProps) 
       <h3 className="text-xl font-extrabold text-zinc-900 sm:text-2xl">{heading}</h3>
 
       {alternatives.length === 0 ? (
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-zinc-600">
           No verified independent alternatives nearby yet. Know one? Submit a tip below.
         </p>
       ) : (
-        <ul className="-mx-4 flex snap-x snap-mandatory space-x-4 overflow-x-auto px-4 pb-4 sm:mx-0 sm:px-0">
+        <ul
+          role="list"
+          tabIndex={0}
+          aria-label="Independent alternatives, scroll sideways to see more"
+          className="-mx-4 flex snap-x snap-mandatory space-x-4 overflow-x-auto px-4 pb-4 sm:mx-0 sm:px-0"
+        >
           {alternatives.map((alternative) => (
             <li
               key={alternative.location_id}
@@ -116,14 +155,14 @@ function AlternativesSlider({ heading, alternatives }: AlternativesSliderProps) 
               <div className="space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <h4 className="font-bold text-zinc-900">{alternative.brand_name}</h4>
-                  <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600">
+                  <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-700">
                     {alternative.distance_meters}m away
                   </span>
                 </div>
                 <p className="text-sm text-zinc-500">
                   {alternative.unique_selling_proposition ?? "Independently owned"}
                 </p>
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-zinc-500">
                   {[alternative.address, alternative.neighborhood].filter(Boolean).join(" · ")}
                 </p>
               </div>
@@ -131,16 +170,67 @@ function AlternativesSlider({ heading, alternatives }: AlternativesSliderProps) 
                 href={build_directions_url(alternative)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-zinc-700"
+                className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-zinc-700"
               >
                 <NavigateIcon />
                 Navigate
+                <span className="sr-only"> to {alternative.brand_name} (opens in a new tab)</span>
               </a>
             </li>
           ))}
         </ul>
       )}
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------------- */
+/* City + vertical selectors                                                  */
+/* ------------------------------------------------------------------------- */
+
+interface ScopeSelectorsProps {
+  catalog: CatalogResponse;
+  scope: DiscoveryScope;
+  on_change: (scope: DiscoveryScope) => void;
+}
+
+const SELECT_CLASSES =
+  "min-h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900";
+
+function ScopeSelectors({ catalog, scope, on_change }: ScopeSelectorsProps) {
+  return (
+    <form aria-label="Narrow results" onSubmit={(event) => event.preventDefault()} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <label className="block text-sm font-medium text-zinc-700">
+        City
+        <select
+          value={scope.city}
+          onChange={(event) => on_change({ ...scope, city: event.target.value })}
+          className={`${SELECT_CLASSES} mt-1`}
+        >
+          <option value="">All cities</option>
+          {catalog.cities.map((city) => (
+            <option key={city} value={city}>
+              {city}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-sm font-medium text-zinc-700">
+        Type of business
+        <select
+          value={scope.vertical}
+          onChange={(event) => on_change({ ...scope, vertical: event.target.value as DiscoveryScope["vertical"] })}
+          className={`${SELECT_CLASSES} mt-1`}
+        >
+          <option value="">All types</option>
+          {catalog.verticals.map((vertical) => (
+            <option key={vertical} value={vertical}>
+              {VERTICAL_LABELS[vertical]}
+            </option>
+          ))}
+        </select>
+      </label>
+    </form>
   );
 }
 
@@ -155,7 +245,7 @@ function CorporateResultView({ result }: { result: NearbyCorporateResult }) {
     <div className="space-y-8">
       {/* Selection view: corporate profile + alert banner */}
       <section className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 text-zinc-50 shadow-lg">
-        <div role="alert" className="flex items-center gap-3 bg-amber-500/10 px-5 py-3 text-amber-500">
+        <div role="note" className="flex items-center gap-3 bg-amber-500/10 px-5 py-3 text-amber-500">
           <AlertIcon />
           <p className="text-sm font-semibold uppercase tracking-wide">
             {TIER_ALERT_LABEL[target.corporate_tier]}
@@ -171,12 +261,19 @@ function CorporateResultView({ result }: { result: NearbyCorporateResult }) {
           )}
           <p className="pt-2 text-sm text-zinc-300">
             Ownership: <span className="font-medium">{target.parent_entity}</span>{" "}
-            <span className="text-zinc-500">(Tier {target.corporate_tier})</span>
+            <span className="text-zinc-400">(Tier {target.corporate_tier})</span>
           </p>
+          {target.financial_backers.length > 0 && (
+            <p className="text-sm text-zinc-300">
+              Backed by: <span className="font-medium">{target.financial_backers.join(", ")}</span>
+            </p>
+          )}
         </div>
       </section>
 
-      <IndependentMap target={target} alternatives={alternatives} />
+      <div role="region" aria-label="Map of nearby independent alternatives">
+        <IndependentMap target={target} alternatives={alternatives} />
+      </div>
 
       <AlternativesSlider
         heading="Keep it local instead? Here are independent alternatives within a 5-minute walk."
@@ -193,6 +290,7 @@ function build_centroid_target(origin: Extract<NearbyResponse["origin"], { kind:
     brand_name: `${origin.neighborhood} (centre)`,
     corporate_tier: 2,
     parent_entity: "",
+    financial_backers: [],
     address: origin.neighborhood,
     neighborhood: origin.neighborhood,
     latitude: origin.latitude,
@@ -218,6 +316,11 @@ export default function DiscoveryDashboard() {
   const [search_text, set_search_text] = useState("");
   const [suggestions, set_suggestions] = useState<string[]>([]);
   const [is_panel_open, set_is_panel_open] = useState(false);
+  const [catalog, set_catalog] = useState<CatalogResponse | null>(null);
+  const [scope, set_scope] = useState<DiscoveryScope>(ALL_SCOPE);
+  // Mirrors `scope` so stable callbacks (e.g. the location request) always read the latest value.
+  const scope_ref = useRef<DiscoveryScope>(ALL_SCOPE);
+  const [active_suggestion, set_active_suggestion] = useState(-1);
 
   const enter_fallback = useCallback((notice: string | null) => {
     set_mode("fallback");
@@ -243,7 +346,9 @@ export default function DiscoveryDashboard() {
         const longitude = position.coords.longitude.toFixed(4);
         set_mode("located");
         set_active_neighborhood(null);
-        set_request_url(`/api/proximity?scope=nearest&lat=${latitude}&lng=${longitude}`);
+        set_request_url(
+          build_discovery_url({ kind: "coordinates", latitude, longitude }, scope_ref.current),
+        );
       },
       (geolocation_error) => enter_fallback(describe_geolocation_failure(geolocation_error)),
       GEOLOCATION_OPTIONS,
@@ -270,15 +375,33 @@ export default function DiscoveryDashboard() {
     request_device_location();
   }, [request_device_location]);
 
-  // Load neighborhood options for the fallback menu.
+  // Load which cities and verticals have data; drives the selectors.
+  useEffect(() => {
+    const abort_controller = new AbortController();
+    async function fetch_catalog_options(): Promise<void> {
+      try {
+        const response = await fetch("/api/catalog", { signal: abort_controller.signal });
+        if (!response.ok) throw new Error(await read_error_message(response));
+        set_catalog((await response.json()) as CatalogResponse);
+      } catch {
+        // Selectors are an enhancement; without them the app searches everywhere.
+      }
+    }
+    void fetch_catalog_options();
+    return () => abort_controller.abort();
+  }, []);
+
+  // Load neighborhood options for the fallback menu (narrowed to the chosen city).
   useEffect(() => {
     const abort_controller = new AbortController();
     async function fetch_neighborhood_options(): Promise<void> {
       try {
-        const response = await fetch("/api/neighborhoods", { signal: abort_controller.signal });
+        const query = scope.city ? `?city=${encodeURIComponent(scope.city)}` : "";
+        const response = await fetch(`/api/neighborhoods${query}`, { signal: abort_controller.signal });
         if (!response.ok) throw new Error(await read_error_message(response));
         const payload = (await response.json()) as NeighborhoodsResponse;
         set_neighborhoods(payload.neighborhoods);
+        set_neighborhoods_error(null);
       } catch (caught_error) {
         if (abort_controller.signal.aborted) return;
         set_neighborhoods_error(
@@ -288,7 +411,7 @@ export default function DiscoveryDashboard() {
     }
     void fetch_neighborhood_options();
     return () => abort_controller.abort();
-  }, []);
+  }, [scope.city]);
 
   // Debounced server-side lookahead for the neighborhood text box.
   useEffect(() => {
@@ -300,12 +423,15 @@ export default function DiscoveryDashboard() {
     const abort_controller = new AbortController();
     const timer_id = window.setTimeout(async () => {
       try {
-        const response = await fetch(`/api/proximity?suggest=${encodeURIComponent(prefix)}`, {
-          signal: abort_controller.signal,
-        });
+        const city_param = scope.city ? `&city=${encodeURIComponent(scope.city)}` : "";
+        const response = await fetch(
+          `/api/proximity?suggest=${encodeURIComponent(prefix)}${city_param}`,
+          { signal: abort_controller.signal },
+        );
         if (!response.ok) throw new Error(await read_error_message(response));
         const payload = (await response.json()) as NeighborhoodSuggestionsResponse;
         set_suggestions(payload.suggestions);
+        set_active_suggestion(-1);
       } catch {
         // Lookahead is a convenience; failures simply show no suggestions.
         if (!abort_controller.signal.aborted) set_suggestions([]);
@@ -315,7 +441,7 @@ export default function DiscoveryDashboard() {
       window.clearTimeout(timer_id);
       abort_controller.abort();
     };
-  }, [search_text]);
+  }, [search_text, scope.city]);
 
   // Fetch discovery results whenever the request URL changes, then cache them.
   useEffect(() => {
@@ -330,7 +456,8 @@ export default function DiscoveryDashboard() {
         const payload = (await response.json()) as NearbyResponse;
 
         const storage = get_browser_storage();
-        if (storage) {
+        // Only unscoped results are cached: the cache is restored without its scope.
+        if (storage && is_default_scope(scope_ref.current)) {
           write_cached_discovery(
             storage,
             payload.origin.kind === "coordinates" ? "device" : "neighborhood",
@@ -356,14 +483,59 @@ export default function DiscoveryDashboard() {
     set_active_neighborhood(neighborhood);
     set_search_text(neighborhood);
     set_suggestions([]);
+    set_active_suggestion(-1);
     set_cached_at_ms(null);
-    set_request_url(`/api/proximity?neighborhood=${encodeURIComponent(neighborhood)}`);
+    set_request_url(build_discovery_url({ kind: "neighborhood", name: neighborhood }, scope_ref.current));
+  }
+
+  /** Changing city or vertical re-runs the current search with the new scope. */
+  function apply_scope(next_scope: DiscoveryScope): void {
+    scope_ref.current = next_scope;
+    set_scope(next_scope);
+    // Cached results were fetched without a scope, so they no longer match.
+    const storage = get_browser_storage();
+    if (storage) clear_cached_discovery(storage);
+    set_cached_at_ms(null);
+
+    const current_origin = fetch_state.status === "success" ? fetch_state.payload.origin : null;
+    if (current_origin === null) return;
+    set_request_url(
+      build_discovery_url(
+        current_origin.kind === "coordinates"
+          ? {
+              kind: "coordinates",
+              latitude: current_origin.latitude.toFixed(4),
+              longitude: current_origin.longitude.toFixed(4),
+            }
+          : { kind: "neighborhood", name: current_origin.neighborhood },
+        next_scope,
+      ),
+    );
   }
 
   function handle_search_submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     const neighborhood = search_text.trim();
     if (neighborhood.length > 0) select_neighborhood(neighborhood);
+  }
+
+  /** Combobox keyboard support: arrows move through suggestions, Enter picks, Escape closes. */
+  function handle_search_keydown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (suggestions.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      set_active_suggestion((index) => (index + 1) % suggestions.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      set_active_suggestion((index) => (index <= 0 ? suggestions.length - 1 : index - 1));
+    } else if (event.key === "Enter" && active_suggestion >= 0) {
+      event.preventDefault();
+      const chosen = suggestions[active_suggestion];
+      if (chosen) select_neighborhood(chosen);
+    } else if (event.key === "Escape") {
+      set_suggestions([]);
+      set_active_suggestion(-1);
+    }
   }
 
   /** Drops the saved state and re-requests the device location. */
@@ -378,6 +550,8 @@ export default function DiscoveryDashboard() {
   const results = payload?.results ?? [];
   const selected_result = results[selected_index] ?? results[0];
   const centroid_origin = payload?.origin.kind === "neighborhood" ? payload.origin : null;
+  const suggestions_visible =
+    suggestions.length > 0 && search_text.trim().toLowerCase() !== suggestions[0]?.toLowerCase();
   const cache_age_minutes =
     cached_at_ms === null ? null : Math.max(0, Math.floor((Date.now() - cached_at_ms) / 60_000));
 
@@ -390,10 +564,14 @@ export default function DiscoveryDashboard() {
         </p>
       </header>
 
+      {catalog && (catalog.cities.length > 0 || catalog.verticals.length > 0) && (
+        <ScopeSelectors catalog={catalog} scope={scope} on_change={apply_scope} />
+      )}
+
       {mode === "locating" && (
         <p
-          className="animate-pulse rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-600"
-          aria-live="polite"
+          role="status"
+          className="motion-safe:animate-pulse rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-600"
         >
           Finding corporate-backed spots near you… Please allow location access.
         </p>
@@ -406,13 +584,13 @@ export default function DiscoveryDashboard() {
               ? "Showing results near your current location."
               : `Showing saved results from ${cache_age_minutes} min ago (kept up to ${GEOLOCATION_CACHE_TTL_MS / 60_000} min).`}
           </span>
-          <span className="space-x-4">
+          <span className="flex flex-wrap gap-x-4">
             {cache_age_minutes !== null && (
-              <button type="button" onClick={refresh_location} className="font-semibold text-zinc-900 underline underline-offset-2">
+              <button type="button" onClick={refresh_location} className="inline-flex min-h-11 items-center font-semibold text-zinc-900 underline underline-offset-2">
                 Refresh my location
               </button>
             )}
-            <button type="button" onClick={() => enter_fallback(null)} className="font-semibold text-zinc-900 underline underline-offset-2">
+            <button type="button" onClick={() => enter_fallback(null)} className="inline-flex min-h-11 items-center font-semibold text-zinc-900 underline underline-offset-2">
               Browse by neighborhood instead
             </button>
           </span>
@@ -440,6 +618,12 @@ export default function DiscoveryDashboard() {
             <div className="flex gap-2">
               <input
                 type="search"
+                role="combobox"
+                aria-expanded={suggestions_visible}
+                aria-controls="neighborhood-suggestions"
+                aria-autocomplete="list"
+                aria-activedescendant={active_suggestion >= 0 ? `neighborhood-suggestion-${active_suggestion}` : undefined}
+                onKeyDown={handle_search_keydown}
                 value={search_text}
                 onChange={(event) => set_search_text(event.target.value)}
                 placeholder="e.g. West Village, Astoria…"
@@ -456,21 +640,36 @@ export default function DiscoveryDashboard() {
                 Search
               </button>
             </div>
-            {suggestions.length > 0 && search_text.trim().toLowerCase() !== suggestions[0]?.toLowerCase() && (
-              <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg">
-                {suggestions.map((suggestion) => (
-                  <li key={suggestion}>
-                    <button
-                      type="button"
-                      onClick={() => select_neighborhood(suggestion)}
-                      className="block w-full px-4 py-2.5 text-left text-sm text-zinc-800 hover:bg-zinc-100"
-                    >
-                      {suggestion}
-                    </button>
+            {suggestions_visible && (
+              <ul
+                id="neighborhood-suggestions"
+                role="listbox"
+                aria-label="Neighborhood suggestions"
+                className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg"
+              >
+                {suggestions.map((suggestion, index) => (
+                  <li
+                    key={suggestion}
+                    id={`neighborhood-suggestion-${index}`}
+                    role="option"
+                    aria-selected={index === active_suggestion}
+                    onMouseDown={(event) => {
+                      // Keep input focus so the click is not lost to a blur.
+                      event.preventDefault();
+                      select_neighborhood(suggestion);
+                    }}
+                    className={`block min-h-11 cursor-pointer px-4 py-3 text-left text-sm text-zinc-800 hover:bg-zinc-100 ${
+                      index === active_suggestion ? "bg-zinc-100" : ""
+                    }`}
+                  >
+                    {suggestion}
                   </li>
                 ))}
               </ul>
             )}
+            <p role="status" className="sr-only">
+              {suggestions_visible ? `${suggestions.length} suggestions available. Use up and down arrows to review.` : ""}
+            </p>
           </form>
 
           {neighborhoods_error && (
@@ -486,7 +685,7 @@ export default function DiscoveryDashboard() {
                 type="button"
                 onClick={() => select_neighborhood(neighborhood)}
                 aria-pressed={active_neighborhood === neighborhood}
-                className={`rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
                   active_neighborhood === neighborhood
                     ? "border-zinc-900 bg-zinc-900 text-white"
                     : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-900"
@@ -497,7 +696,7 @@ export default function DiscoveryDashboard() {
             ))}
           </div>
 
-          <button type="button" onClick={refresh_location} className="text-sm font-semibold text-zinc-900 underline underline-offset-2">
+          <button type="button" onClick={refresh_location} className="inline-flex min-h-11 items-center text-sm font-semibold text-zinc-900 underline underline-offset-2">
             Try my location again
           </button>
         </section>
@@ -506,7 +705,7 @@ export default function DiscoveryDashboard() {
       {/* Reserve vertical space so late-arriving results don't shift the layout (CLS). */}
       <div className="min-h-[32rem] space-y-8">
         {fetch_state.status === "loading" && (
-          <p className="text-sm text-zinc-500" aria-live="polite">
+          <p className="text-sm text-zinc-600" role="status">
             Finding independent alternatives…
           </p>
         )}
@@ -531,8 +730,8 @@ export default function DiscoveryDashboard() {
                 key={result.target.location_id}
                 type="button"
                 onClick={() => set_selected_index(index)}
-                aria-current={index === selected_index}
-                className={`shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                aria-current={index === selected_index ? "true" : undefined}
+                className={`min-h-11 shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
                   index === selected_index
                     ? "border-zinc-900 bg-zinc-900 text-white"
                     : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-900"
@@ -552,10 +751,12 @@ export default function DiscoveryDashboard() {
         {/* Neighborhood with no corporate brands: still offer independents around its centre. */}
         {centroid_origin && results.length === 0 && payload && payload.origin_alternatives.length > 0 && (
           <div className="space-y-8">
-            <IndependentMap
-              target={build_centroid_target(centroid_origin)}
-              alternatives={payload.origin_alternatives}
-            />
+            <div role="region" aria-label="Map of nearby independent alternatives">
+              <IndependentMap
+                target={build_centroid_target(centroid_origin)}
+                alternatives={payload.origin_alternatives}
+              />
+            </div>
             <AlternativesSlider
               heading={`Independent spots within 1500m of the centre of ${centroid_origin.neighborhood}.`}
               alternatives={payload.origin_alternatives}
@@ -569,7 +770,7 @@ export default function DiscoveryDashboard() {
         <button
           type="button"
           onClick={() => set_is_panel_open(true)}
-          className="rounded-xl border border-zinc-200 px-5 py-3 text-sm font-semibold text-zinc-900 transition-colors hover:border-zinc-900"
+          className="min-h-11 rounded-xl border border-zinc-200 px-5 py-3 text-sm font-semibold text-zinc-900 transition-colors hover:border-zinc-900"
         >
           Know of an ownership change? Submit a tip
         </button>

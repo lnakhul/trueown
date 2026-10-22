@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useState } from "react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import TurnstileWidget from "@/components/TurnstileWidget";
 import { validate_evidence_url } from "@/lib/validation";
 import type { ApiErrorResponse } from "@/lib/types";
@@ -26,6 +26,44 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
   const [submit_message, set_submit_message] = useState<
     { kind: "success" | "error"; text: string } | null
   >(null);
+
+  const panel_ref = useRef<HTMLElement>(null);
+  const first_input_ref = useRef<HTMLInputElement>(null);
+
+  // Dialog focus management: move focus in on open, restore it to the opener on close.
+  useEffect(() => {
+    if (!is_open) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Wait a frame so the inputs are enabled and the panel is visible.
+    const frame_id = window.requestAnimationFrame(() => first_input_ref.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame_id);
+      opener?.focus();
+    };
+  }, [is_open]);
+
+  /** Escape closes the dialog; Tab wraps inside it so focus cannot reach the page behind. */
+  function handle_panel_keydown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      on_close();
+      return;
+    }
+    if (event.key !== "Tab" || !panel_ref.current) return;
+    const focusable = panel_ref.current.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]):not([tabindex="-1"]), iframe',
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   const evidence_validation = validate_evidence_url(evidence_url);
   const evidence_error =
@@ -95,18 +133,22 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
         />
       )}
       <aside
+        ref={panel_ref}
         role="dialog"
         aria-modal="true"
-        aria-label="Submit an ownership tip"
+        aria-labelledby="tip-panel-heading"
         aria-hidden={!is_open}
-        className={`fixed inset-y-0 right-0 z-50 w-full max-w-md overflow-y-auto bg-white shadow-2xl transition-transform duration-300 ${
-          is_open ? "translate-x-0" : "translate-x-full"
+        onKeyDown={handle_panel_keydown}
+        // `inert` removes the closed panel from the tab order and accessibility tree.
+        {...(is_open ? {} : ({ inert: "" } as Record<string, string>))}
+        className={`fixed inset-y-0 right-0 z-50 w-full max-w-md overflow-y-auto bg-white shadow-2xl transition-[transform,visibility] duration-300 ${
+          is_open ? "visible translate-x-0" : "invisible translate-x-full"
         }`}
       >
         <form onSubmit={handle_submit} noValidate className="flex min-h-full flex-col gap-5 p-6">
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-xl font-bold text-zinc-900">Submit an ownership tip</h2>
+              <h2 id="tip-panel-heading" className="text-xl font-bold text-zinc-900">Submit an ownership tip</h2>
               <p className="mt-1 text-sm text-zinc-500">
                 Tips are reviewed by an admin before going live. A public source is required.
               </p>
@@ -114,10 +156,10 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
             <button
               type="button"
               onClick={on_close}
-              className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
               aria-label="Close panel"
             >
-              ✕
+              <span aria-hidden="true">✕</span>
             </button>
           </div>
 
@@ -136,7 +178,9 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
           <label className="block text-sm font-medium text-zinc-700">
             Business name
             <input
+              ref={first_input_ref}
               className={`${input_classes} mt-1`}
+              autoComplete="organization"
               value={business_name}
               onChange={(event) => set_business_name(event.target.value)}
               placeholder="e.g. Blank Street Coffee"
@@ -150,6 +194,7 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
             Street address
             <input
               className={`${input_classes} mt-1`}
+              autoComplete="street-address"
               value={street_address}
               onChange={(event) => set_street_address(event.target.value)}
               placeholder="e.g. 284 Lafayette St, New York"
@@ -171,10 +216,11 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
               placeholder="https://example.com/press-release"
               aria-invalid={evidence_error !== null}
               aria-describedby="evidence-url-error"
+              autoComplete="off"
               required
               disabled={!is_open}
             />
-            <span id="evidence-url-error" role="alert" className="mt-1 block min-h-5 text-sm text-red-600">
+            <span id="evidence-url-error" role="alert" className="mt-1 block min-h-5 text-sm text-red-700">
               {evidence_error}
             </span>
           </label>
@@ -205,13 +251,14 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
             disabled={!can_submit}
             className={`mt-auto w-full rounded-xl px-4 py-3 text-base font-semibold text-white transition-colors ${
               is_submitting
-                ? "cursor-wait bg-amber-500"
+                ? "cursor-wait bg-amber-700"
                 : can_submit
                   ? "bg-zinc-900 hover:bg-zinc-700"
                   : "cursor-not-allowed bg-zinc-300"
             }`}
           >
             {is_submitting ? "Verifying link & submitting…" : "Submit for review"}
+            {is_submitting && <span className="sr-only"> Please wait</span>}
           </button>
         </form>
       </aside>
