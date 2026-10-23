@@ -121,13 +121,13 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
   }
 
   const input_classes =
-    "w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-base text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-zinc-900";
+    "min-h-11 w-full rounded-xl border border-hairline bg-surface-page px-4 py-3 text-base text-zinc-100 outline-none transition-colors placeholder:text-zinc-500 focus:border-zinc-500";
 
   return (
     <>
       {is_open && (
         <div
-          className="fixed inset-0 z-40 bg-zinc-900/40"
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px]"
           onClick={on_close}
           aria-hidden="true"
         />
@@ -141,25 +141,28 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
         onKeyDown={handle_panel_keydown}
         // `inert` removes the closed panel from the tab order and accessibility tree.
         {...(is_open ? {} : ({ inert: "" } as Record<string, string>))}
-        className={`fixed inset-y-0 right-0 z-50 w-full max-w-md overflow-y-auto bg-white shadow-2xl transition-[transform,visibility] duration-300 ${
+        className={`fixed inset-y-0 right-0 z-50 w-full max-w-md overflow-y-auto overscroll-contain bg-surface-card shadow-lift [box-shadow:inset_1px_0_0_rgb(255_255_255/0.06),-24px_0_48px_-12px_rgb(0_0_0/0.6)] transition-[transform,visibility] duration-300 ease-spring ${
           is_open ? "visible translate-x-0" : "invisible translate-x-full"
         }`}
       >
-        <form onSubmit={handle_submit} noValidate className="flex min-h-full flex-col gap-5 p-6">
+        <form onSubmit={handle_submit} noValidate className="flex min-h-full flex-col gap-5 p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
           <div className="flex items-start justify-between">
             <div>
-              <h2 id="tip-panel-heading" className="text-xl font-bold text-zinc-900">Submit an ownership tip</h2>
-              <p className="mt-1 text-sm text-zinc-500">
+              <h2 id="tip-panel-heading" className="text-xl font-semibold tracking-tight text-zinc-50">Submit an ownership tip</h2>
+              <p className="mt-1 text-sm text-zinc-400">
                 Tips are reviewed by an admin before going live. A public source is required.
               </p>
             </div>
             <button
               type="button"
               onClick={on_close}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-zinc-300 transition-colors hover:bg-white/[0.1] hover:text-zinc-50"
               aria-label="Close panel"
             >
-              <span aria-hidden="true">✕</span>
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
             </button>
           </div>
 
@@ -175,7 +178,7 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
             </label>
           </div>
 
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-300">
             Business name
             <input
               ref={first_input_ref}
@@ -190,7 +193,7 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
             />
           </label>
 
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-300">
             Street address
             <input
               className={`${input_classes} mt-1`}
@@ -204,10 +207,10 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
             />
           </label>
 
-          <label className="block text-sm font-medium text-zinc-700">
+          <label className="block text-sm font-medium text-zinc-300">
             Evidence URL (SEC filing, press release, or news article)
             <input
-              className={`${input_classes} mt-1 ${evidence_error ? "border-red-500 focus:border-red-600" : ""}`}
+              className={`${input_classes} mt-1 ${evidence_error ? "border-red-400/70 focus:border-red-400" : ""}`}
               type="url"
               inputMode="url"
               value={evidence_url}
@@ -220,7 +223,7 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
               required
               disabled={!is_open}
             />
-            <span id="evidence-url-error" role="alert" className="mt-1 block min-h-5 text-sm text-red-700">
+            <span id="evidence-url-error" role="alert" className="mt-1 block min-h-5 text-sm text-red-300">
               {evidence_error}
             </span>
           </label>
@@ -238,8 +241,8 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
               role="status"
               className={`rounded-xl px-4 py-3 text-sm ${
                 submit_message.kind === "success"
-                  ? "bg-emerald-500/10 text-emerald-700"
-                  : "bg-red-500/10 text-red-700"
+                  ? "bg-independent-muted text-independent"
+                  : "bg-red-500/10 text-red-300"
               }`}
             >
               {submit_message.text}
@@ -249,12 +252,12 @@ export default function SubmissionPanel({ is_open, on_close }: SubmissionPanelPr
           <button
             type="submit"
             disabled={!can_submit}
-            className={`mt-auto w-full rounded-xl px-4 py-3 text-base font-semibold text-white transition-colors ${
+            className={`mt-auto min-h-11 w-full rounded-xl px-4 py-3 text-base font-semibold transition-colors ${
               is_submitting
-                ? "cursor-wait bg-amber-700"
+                ? "cursor-wait bg-corporate-strong text-zinc-950"
                 : can_submit
-                  ? "bg-zinc-900 hover:bg-zinc-700"
-                  : "cursor-not-allowed bg-zinc-300"
+                  ? "bg-zinc-100 text-zinc-950 hover:bg-white"
+                  : "cursor-not-allowed bg-zinc-800 text-zinc-500"
             }`}
           >
             {is_submitting ? "Verifying link & submitting…" : "Submit for review"}
