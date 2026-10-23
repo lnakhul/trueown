@@ -347,7 +347,8 @@ describe("city and vertical scope", () => {
 
   test("catalog lists the cities and verticals that have storefronts", async () => {
     const catalog = await fetch_catalog(test_pool);
-    expect(catalog.cities).toContain("New York City");
+    expect(catalog.cities).toContain("New York");
+    expect(catalog.cities).not.toContain("New York City");
     expect(catalog.verticals).toContain("coffee_bakery");
   });
 });

@@ -75,7 +75,8 @@ Migrations live in `supabase/migrations/` and run in filename order; `supabase/s
 All importers support `--dry-run` (validate and roll back) and require `--yes` for non-local databases. They are all-or-nothing.
 
 ```bash
-npm run db:import:boundaries                       # NYC NTA 2020 polygons (--download to refresh)
+npm run db:import:markets                          # markets from data/markets/*/market.json
+npm run db:import:boundaries                       # NYC NTA 2020 polygons (--market <slug> --download for other cities)
 npm run db:import:brands -- <brands.csv>           # brand-level rows
 npm run db:import:venues -- <venues.csv>           # brands + storefronts with provenance
 ```
