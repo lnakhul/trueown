@@ -1,5 +1,6 @@
 import type { Pool as PgPool } from "pg";
 import { get_database_pool } from "@/lib/db/pool";
+import type { OwnershipSource } from "@/lib/provenance";
 import { estimate_walking_minutes } from "@/lib/proximity-format";
 import type {
   AlternativeRecommendation,
@@ -47,6 +48,7 @@ export interface CorporateLocationRecord {
   corporate_tier: 1 | 2;
   parent_entity: string;
   financial_backers: string[];
+  ownership_source: OwnershipSource | null;
   industry_vertical: IndustryVertical;
   market_id: string;
   address: string;
@@ -67,6 +69,9 @@ interface CorporateLocationRow {
   corporate_tier: number;
   parent_entity: string;
   financial_backers: string[] | null;
+  ownership_source_type: string | null;
+  ownership_source_url: string | null;
+  ownership_verified_on: string | null;
   industry_vertical: IndustryVertical;
   market_id: string;
   address: string;
@@ -92,6 +97,9 @@ const CORPORATE_LOCATION_COLUMNS = `
   b.corporate_tier,
   b.parent_entity,
   b.financial_backers,
+  b.ownership_source_type,
+  b.ownership_source_url,
+  to_char(b.ownership_verified_on, 'YYYY-MM-DD') AS ownership_verified_on,
   b.industry_vertical,
   l.market_id,
   l.address,
@@ -106,6 +114,14 @@ function to_corporate_record(row: CorporateLocationRow): CorporateLocationRecord
     corporate_tier: row.corporate_tier as CorporateTier as 1 | 2,
     parent_entity: row.parent_entity,
     financial_backers: row.financial_backers ?? [],
+    ownership_source:
+      row.ownership_source_type && row.ownership_source_url && row.ownership_verified_on
+        ? {
+            source_type: row.ownership_source_type,
+            source_url: row.ownership_source_url,
+            verified_on: row.ownership_verified_on,
+          }
+        : null,
     industry_vertical: row.industry_vertical,
     market_id: row.market_id,
     address: row.address,
@@ -260,6 +276,7 @@ function to_corporate_target(candidate: CorporateCandidate): CorporateTarget {
     corporate_tier: record.corporate_tier,
     parent_entity: record.parent_entity,
     financial_backers: record.financial_backers,
+    ownership_source: record.ownership_source,
     address: record.address,
     neighborhood: record.neighborhood,
     latitude: record.latitude,

@@ -83,32 +83,21 @@ describe("RLS: brands and locations", () => {
     }
   });
 
-  test("authenticated non-admins and forged user_metadata admins cannot write", async () => {
-    for (const claims of [USER_CLAIMS, FORGED_CLAIMS]) {
-      await within_rollback(async (client) => {
-        await act_as(client, "authenticated", claims);
-        await expect(client.query(NEW_BRAND_SQL)).rejects.toThrow(/row-level security/);
-      });
-      await within_rollback(async (client) => {
-        await act_as(client, "authenticated", claims);
-        const updated = await client.query("UPDATE brands SET name = name");
-        const deleted = await client.query("DELETE FROM brands");
-        expect(updated.rowCount).toBe(0);
-        expect(deleted.rowCount).toBe(0);
-      });
+  test("no API role can write brands or storefronts directly, admins included", async () => {
+    for (const claims of [USER_CLAIMS, FORGED_CLAIMS, ADMIN_CLAIMS]) {
+      for (const statement of [
+        NEW_BRAND_SQL,
+        "UPDATE brands SET name = name",
+        "DELETE FROM brands",
+        "UPDATE locations SET address = address",
+        "DELETE FROM locations",
+      ]) {
+        await within_rollback(async (client) => {
+          await act_as(client, "authenticated", claims);
+          await expect(client.query(statement)).rejects.toThrow(/permission denied/);
+        });
+      }
     }
-  });
-
-  test("authenticated admins can write", async () => {
-    await within_rollback(async (client) => {
-      await act_as(client, "authenticated", ADMIN_CLAIMS);
-      const inserted = await client.query(NEW_BRAND_SQL);
-      expect(inserted.rowCount).toBe(1);
-      const updated = await client.query(
-        "UPDATE brands SET unique_selling_proposition = 'ok' WHERE name = 'RLS Test Roasters'",
-      );
-      expect(updated.rowCount).toBe(1);
-    });
   });
 });
 
@@ -378,5 +367,182 @@ describe("SECURITY DEFINER routines", () => {
         search_path: expect.stringMatching(/^search_path=.*\bextensions\b/),
       });
     }
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/* Brand re-verification and corrections                                      */
+/* ------------------------------------------------------------------------- */
+
+const BRAND_ID = "5b0d8a1e-7c2f-4e93-a6d1-3f8e2c9b7a40";
+const REVERIFY_SQL = "SELECT reverify_brand($1, $2, $3)";
+const CORRECT_SQL = "SELECT correct_brand($1, $2, $3, $4, $5, $6, $7)";
+
+/** A Tier 2 brand with one NYC storefront and no recorded source (inserted as the table owner). */
+async function insert_brand(client: PoolClient, name = "Audit Brand Coffee"): Promise<void> {
+  await client.query(
+    `INSERT INTO brands (id, name, corporate_tier, industry_vertical, parent_entity)
+     VALUES ($1, $2, 2, 'coffee_bakery', 'Old Capital')`,
+    [BRAND_ID, name],
+  );
+  await client.query(
+    `INSERT INTO locations (brand_id, address, coordinates)
+     VALUES ($1, '3 Audit St, New York, NY', ST_SetSRID(ST_MakePoint(-74.0021, 40.7324), 4326))`,
+    [BRAND_ID],
+  );
+}
+
+describe("audited brand routines", () => {
+  test("anon cannot call them; non-admins and forged admins are refused", async () => {
+    await within_rollback(async (client) => {
+      await insert_brand(client);
+      await act_as(client, "anon");
+      await expect_rejection(client, REVERIFY_SQL, [BRAND_ID, "crunchbase", "https://example.com/a"], /permission denied/);
+      await expect_rejection(
+        client,
+        CORRECT_SQL,
+        [BRAND_ID, 1, "New Capital", [], "sec_edgar", "https://example.com/b", "why"],
+        /permission denied/,
+      );
+      for (const claims of [USER_CLAIMS, FORGED_CLAIMS, ADMIN_CLAIMS]) {
+        await act_as(client, "authenticated", claims);
+        await expect_rejection(client, REVERIFY_SQL, [BRAND_ID, "crunchbase", "https://example.com/a"], /not_admin/);
+        await expect_rejection(
+          client,
+          CORRECT_SQL,
+          [BRAND_ID, 1, "New Capital", [], "sec_edgar", "https://example.com/b", "why"],
+          /not_admin/,
+        );
+      }
+    });
+  });
+
+  test("re-verification records fresh evidence, keeps the claim and is audited", async () => {
+    await within_rollback(async (client) => {
+      await insert_brand(client);
+      await act_as(client, "authenticated", AUDITED_ADMIN_CLAIMS);
+      await expect_rejection(client, REVERIFY_SQL, [BRAND_ID, "community_consensus", "https://example.com/a"], /invalid_source_type/);
+      await client.query(REVERIFY_SQL, [BRAND_ID, "crunchbase", " https://www.crunchbase.com/organization/audit "]);
+
+      const brand = await client.query(
+        `SELECT corporate_tier, parent_entity, ownership_source_type, ownership_source_url,
+                ownership_verified_on = current_date AS verified_today
+           FROM brands WHERE id = $1`,
+        [BRAND_ID],
+      );
+      expect(brand.rows[0]).toEqual({
+        corporate_tier: 2,
+        parent_entity: "Old Capital",
+        ownership_source_type: "crunchbase",
+        ownership_source_url: "https://www.crunchbase.com/organization/audit",
+        verified_today: true,
+      });
+      const audit = await client.query("SELECT action, actor_id, payload FROM admin_audit_log WHERE brand_id = $1", [BRAND_ID]);
+      expect(audit.rows).toHaveLength(1);
+      expect(audit.rows[0]).toMatchObject({
+        action: "reverify",
+        actor_id: ADMIN_ACTOR,
+        payload: { previous_source_url: null, ownership_source_type: "crunchbase" },
+      });
+    });
+  });
+
+  test("a correction changes the claim with new evidence and a reason, keeping before/after in the log", async () => {
+    await within_rollback(async (client) => {
+      await insert_brand(client);
+      await act_as(client, "authenticated", AUDITED_ADMIN_CLAIMS);
+      await expect_rejection(
+        client,
+        CORRECT_SQL,
+        [BRAND_ID, 1, "New Capital", [], "sec_edgar", "https://example.com/b", "  "],
+        /note_required/,
+      );
+      await expect_rejection(
+        client,
+        CORRECT_SQL,
+        [BRAND_ID, 1, " ", [], "sec_edgar", "https://example.com/b", "PE buyout"],
+        /parent_required/,
+      );
+      await client.query(CORRECT_SQL, [
+        BRAND_ID,
+        1,
+        "New Capital",
+        ["Fund A", "Fund B"],
+        "sec_edgar",
+        "https://www.sec.gov/example",
+        "Acquired by New Capital",
+      ]);
+      const brand = await client.query(
+        "SELECT corporate_tier, parent_entity, financial_backers, ownership_source_type, home_market_id FROM brands WHERE id = $1",
+        [BRAND_ID],
+      );
+      expect(brand.rows[0]).toEqual({
+        corporate_tier: 1,
+        parent_entity: "New Capital",
+        financial_backers: ["Fund A", "Fund B"],
+        ownership_source_type: "sec_edgar",
+        home_market_id: null,
+      });
+      const audit = await client.query("SELECT payload FROM admin_audit_log WHERE brand_id = $1 AND action = 'correct'", [BRAND_ID]);
+      expect(audit.rows[0].payload).toMatchObject({
+        review_note: "Acquired by New Capital",
+        before: { corporate_tier: 2, parent_entity: "Old Capital" },
+        after: { corporate_tier: 1, parent_entity: "New Capital" },
+      });
+    });
+  });
+
+  test("becoming independent clears the parent and backers and sets the home market", async () => {
+    await within_rollback(async (client) => {
+      await insert_brand(client);
+      await act_as(client, "authenticated", AUDITED_ADMIN_CLAIMS);
+      await client.query(CORRECT_SQL, [
+        BRAND_ID,
+        3,
+        "Ignored Parent",
+        ["Ignored Fund"],
+        "state_business_registry",
+        "https://apps.dos.ny.gov/publicInquiry/",
+        "Founders bought the company back",
+      ]);
+      const brand = await client.query(
+        `SELECT b.corporate_tier, b.parent_entity, b.financial_backers, m.slug
+           FROM brands b LEFT JOIN markets m ON m.id = b.home_market_id WHERE b.id = $1`,
+        [BRAND_ID],
+      );
+      expect(brand.rows[0]).toEqual({ corporate_tier: 3, parent_entity: null, financial_backers: [], slug: "nyc" });
+    });
+  });
+
+  test("a brand trading in two markets cannot become a local independent", async () => {
+    await within_rollback(async (client) => {
+      await insert_brand(client);
+      await client.query(
+        `INSERT INTO locations (brand_id, address, coordinates)
+         VALUES ($1, '1 Congress Ave, Austin, TX', ST_SetSRID(ST_MakePoint(-97.7431, 30.2672), 4326))`,
+        [BRAND_ID],
+      );
+      await act_as(client, "authenticated", AUDITED_ADMIN_CLAIMS);
+      await expect_rejection(
+        client,
+        CORRECT_SQL,
+        [BRAND_ID, 3, null, [], "local_press", "https://example.com/c", "Went independent"],
+        /independent_spans_markets/,
+      );
+    });
+  });
+
+  test("a correction cannot contradict another brand with the same name", async () => {
+    await within_rollback(async (client) => {
+      await insert_brand(client, "Birch Coffee");
+      await act_as(client, "authenticated", AUDITED_ADMIN_CLAIMS);
+      // A live Tier 3 "Birch Coffee" already trades in NYC (seed data).
+      await expect_rejection(
+        client,
+        CORRECT_SQL,
+        [BRAND_ID, 1, "Some Capital", [], "sec_edgar", "https://example.com/d", "Buyout"],
+        /brand_tier_conflict/,
+      );
+    });
   });
 });

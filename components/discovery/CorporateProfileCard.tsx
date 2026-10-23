@@ -1,3 +1,4 @@
+import { format_verified_month, provenance_status, source_type_label } from "@/lib/provenance";
 import type { CorporateTarget } from "@/lib/types";
 import { AlertIcon } from "./icons";
 
@@ -14,6 +15,8 @@ interface CorporateProfileCardProps {
 
 /** Ownership profile for a corporate-backed storefront. Wording stays factual. */
 export default function CorporateProfileCard({ target, variant = "full" }: CorporateProfileCardProps) {
+  const source = target.ownership_source ?? null;
+  const status = provenance_status(source);
   return (
     <section className="overflow-hidden rounded-2xl bg-surface-card shadow-hairline">
       <div role="note" className="flex items-center gap-2 bg-corporate-muted px-4 py-2.5 text-corporate">
@@ -50,6 +53,30 @@ export default function CorporateProfileCard({ target, variant = "full" }: Corpo
               <dd className="font-medium text-zinc-200">{target.financial_backers.join(", ")}</dd>
             </>
           )}
+          <dt className="text-zinc-500">Source</dt>
+          <dd className="min-w-0 text-zinc-300">
+            {source ? (
+              <>
+                <a
+                  href={source.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  className="font-medium text-zinc-100 underline decoration-zinc-600 underline-offset-2 hover:decoration-zinc-300"
+                >
+                  {source_type_label(source.source_type)}
+                  <span className="sr-only"> (opens in a new tab)</span>
+                </a>
+                <span className="text-zinc-500"> · verified {format_verified_month(source.verified_on)}</span>
+                {status === "stale" && (
+                  <span className="block text-xs text-zinc-500">
+                    Last checked over a year ago; ownership may have changed since.
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-zinc-500">Not yet recorded</span>
+            )}
+          </dd>
         </dl>
       </div>
     </section>

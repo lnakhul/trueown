@@ -1,6 +1,7 @@
 /**
  * Shared domain types. Names mirror the database taxonomy exactly.
  */
+import type { OwnershipSource } from "@/lib/provenance";
 
 /** 1 = Majority PE buyout, 2 = VC / growth equity, 3 = True independent. */
 export type CorporateTier = 1 | 2 | 3;
@@ -23,6 +24,8 @@ export interface SelectedLocation {
   parent_entity: string;
   /** Named investors; empty when none are recorded. */
   financial_backers: string[];
+  /** Public evidence for the ownership claim; null when none is recorded yet. */
+  ownership_source: OwnershipSource | null;
   address: string;
   latitude: number;
   longitude: number;
