@@ -40,14 +40,14 @@ export default function AdminLoginForm({ notice }: { notice: string | null }) {
   }
 
   return (
-    <form onSubmit={handle_submit} className="w-full max-w-sm space-y-4 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-      <h1 className="text-xl font-extrabold text-zinc-900">Admin sign in</h1>
+    <form onSubmit={handle_submit} className="w-full max-w-sm space-y-4 rounded-xl border border-hairline bg-surface-card p-6 shadow-hairline">
+      <h1 className="text-xl font-semibold tracking-tight text-zinc-50">Admin sign in</h1>
       {error_message && (
-        <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">
           {error_message}
         </p>
       )}
-      <label className="block text-sm font-medium text-zinc-700">
+      <label className="block text-sm font-medium text-zinc-300">
         Email
         <input
           type="email"
@@ -55,10 +55,10 @@ export default function AdminLoginForm({ notice }: { notice: string | null }) {
           autoComplete="email"
           value={email}
           onChange={(event) => set_email(event.target.value)}
-          className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2.5 focus:border-zinc-900 focus:outline-none"
+          className="mt-1 w-full rounded-lg border border-hairline bg-surface-page px-3 py-2.5 text-zinc-100 focus:border-zinc-500 focus:outline-none"
         />
       </label>
-      <label className="block text-sm font-medium text-zinc-700">
+      <label className="block text-sm font-medium text-zinc-300">
         Password
         <input
           type="password"
@@ -66,13 +66,13 @@ export default function AdminLoginForm({ notice }: { notice: string | null }) {
           autoComplete="current-password"
           value={password}
           onChange={(event) => set_password(event.target.value)}
-          className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2.5 focus:border-zinc-900 focus:outline-none"
+          className="mt-1 w-full rounded-lg border border-hairline bg-surface-page px-3 py-2.5 text-zinc-100 focus:border-zinc-500 focus:outline-none"
         />
       </label>
       <button
         type="submit"
         disabled={is_loading}
-        className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 font-semibold text-white transition hover:bg-zinc-700 disabled:bg-zinc-400"
+        className="w-full rounded-lg bg-zinc-100 px-4 py-2.5 font-semibold text-zinc-950 transition hover:bg-white disabled:bg-zinc-800 disabled:text-zinc-500"
       >
         {is_loading ? "Signing in…" : "Sign in"}
       </button>

@@ -14,7 +14,7 @@ const INDUSTRY_OPTIONS: { value: IndustryVertical; label: string }[] = [
 ];
 
 const input_classes =
-  "w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-900";
+  "w-full rounded-lg border border-hairline bg-surface-page px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-500";
 
 type RowStatus = { kind: "idle" } | { kind: "busy" } | { kind: "error"; message: string };
 
@@ -84,13 +84,13 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
   }
 
   return (
-    <li className="space-y-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+    <li className="space-y-4 rounded-xl border border-hairline bg-surface-card p-5 shadow-hairline">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-lg font-bold text-zinc-900">{submission.business_name}</h2>
-          <p className="text-sm text-zinc-500">{submission.street_address}</p>
+          <h2 className="text-lg font-bold text-zinc-50">{submission.business_name}</h2>
+          <p className="text-sm text-zinc-400">{submission.street_address}</p>
         </div>
-        <time className="text-xs text-zinc-400" dateTime={submission.created_at}>
+        <time className="text-xs text-zinc-500" dateTime={submission.created_at}>
           Submitted {new Date(submission.created_at).toLocaleString()}
         </time>
       </div>
@@ -99,18 +99,18 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
         href={submission.evidence_url}
         target="_blank"
         rel="noopener noreferrer nofollow"
-        className="inline-flex max-w-full items-center gap-2 break-all rounded-lg bg-blue-600/10 px-3 py-2 text-sm font-semibold text-blue-700 underline underline-offset-2 hover:bg-blue-600/20"
+        className="inline-flex max-w-full items-center gap-2 break-all rounded-lg bg-sky-400/10 px-3 py-2 text-sm font-semibold text-sky-300 underline underline-offset-2 hover:bg-sky-400/20"
       >
         <span aria-hidden="true">↗</span>
         {submission.evidence_url}
       </a>
 
-      <form onSubmit={handle_approve} className="space-y-3 border-t border-zinc-100 pt-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+      <form onSubmit={handle_approve} className="space-y-3 border-t border-hairline pt-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Verified details required to publish
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="text-xs font-medium text-zinc-600">
+          <label className="text-xs font-medium text-zinc-400">
             Corporate tier
             <select
               className={`${input_classes} mt-1`}
@@ -122,10 +122,10 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
               <option value="3">Tier 3 — Independent</option>
             </select>
           </label>
-          <label className="text-xs font-medium text-zinc-600">
+          <label className="text-xs font-medium text-zinc-400">
             Parent entity {is_independent ? "(none)" : ""}
             <input
-              className={`${input_classes} mt-1 disabled:bg-zinc-50`}
+              className={`${input_classes} mt-1 disabled:bg-zinc-900`}
               value={is_independent ? "" : parent_entity}
               onChange={(event) => set_parent_entity(event.target.value)}
               disabled={is_independent}
@@ -134,7 +134,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
               placeholder="e.g. Acme Capital Partners"
             />
           </label>
-          <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
+          <label className="text-xs font-medium text-zinc-400 sm:col-span-2">
             Source the evidence link comes from (recorded as the brand&apos;s provenance)
             <select
               className={`${input_classes} mt-1`}
@@ -152,7 +152,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
               ))}
             </select>
           </label>
-          <label className="text-xs font-medium text-zinc-600">
+          <label className="text-xs font-medium text-zinc-400">
             Industry
             <select
               className={`${input_classes} mt-1`}
@@ -166,7 +166,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
               ))}
             </select>
           </label>
-          <label className="text-xs font-medium text-zinc-600">
+          <label className="text-xs font-medium text-zinc-400">
             Unique selling proposition
             <input
               className={`${input_classes} mt-1`}
@@ -176,7 +176,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
               placeholder="e.g. Locally roasted beans"
             />
           </label>
-          <label className="text-xs font-medium text-zinc-600">
+          <label className="text-xs font-medium text-zinc-400">
             Latitude
             <input
               className={`${input_classes} mt-1`}
@@ -187,7 +187,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
               placeholder="40.7324"
             />
           </label>
-          <label className="text-xs font-medium text-zinc-600">
+          <label className="text-xs font-medium text-zinc-400">
             Longitude
             <input
               className={`${input_classes} mt-1`}
@@ -201,12 +201,12 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
         </div>
 
         {row_status.kind === "error" && (
-          <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-700">
+          <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">
             {row_status.message}
           </p>
         )}
 
-        <label className="block text-xs font-medium text-zinc-600">
+        <label className="block text-xs font-medium text-zinc-400">
           Rejection note (optional, kept in the audit log)
           <input
             className={`${input_classes} mt-1`}
@@ -221,7 +221,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
           <button
             type="submit"
             disabled={is_busy}
-            className="min-h-11 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-wait disabled:bg-zinc-300"
+            className="min-h-11 rounded-lg bg-independent px-4 py-2.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-emerald-300 disabled:cursor-wait disabled:bg-zinc-800"
           >
             {is_busy ? "Working…" : "Approve & publish"}
           </button>
@@ -229,7 +229,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
             type="button"
             disabled={is_busy}
             onClick={() => void post_decision("reject", { review_note })}
-            className="min-h-11 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-wait disabled:opacity-50"
+            className="min-h-11 rounded-lg border border-red-500/30 px-4 py-2.5 text-sm font-semibold text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-wait disabled:opacity-50"
           >
             Reject
           </button>
@@ -244,39 +244,39 @@ const TIER_LABELS: Record<number, string> = { 1: "Tier 1", 2: "Tier 2", 3: "Tier
 function RecentReviews({ reviews }: { reviews: ReviewedSubmission[] }) {
   if (reviews.length === 0) {
     return (
-      <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500">
+      <p className="rounded-xl border border-dashed border-zinc-700 px-4 py-10 text-center text-sm text-zinc-400">
         No decisions yet.
       </p>
     );
   }
   return (
-    <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-200 bg-white">
+    <ul className="divide-y divide-white/[0.06] rounded-xl border border-hairline bg-surface-card">
       {reviews.map((review) => (
         <li key={review.id} className="space-y-1 px-5 py-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-semibold text-zinc-900">{review.business_name}</span>
+            <span className="font-semibold text-zinc-50">{review.business_name}</span>
             <span
               className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                review.status === "approved" ? "bg-emerald-500/10 text-emerald-700" : "bg-red-500/10 text-red-700"
+                review.status === "approved" ? "bg-independent-muted text-independent" : "bg-red-500/10 text-red-300"
               }`}
             >
               {review.status === "approved" ? "Approved" : "Rejected"}
             </span>
           </div>
-          <p className="text-zinc-500">{review.street_address}</p>
-          <p className="text-zinc-500">
+          <p className="text-zinc-400">{review.street_address}</p>
+          <p className="text-zinc-400">
             {review.reviewer_email ?? "Unknown reviewer"} ·{" "}
             <time dateTime={review.reviewed_at}>{new Date(review.reviewed_at).toLocaleString()}</time>
             {review.corporate_tier !== null && ` · ${TIER_LABELS[review.corporate_tier] ?? ""}`}
             {review.ownership_source_type &&
               ` · ${SOURCE_TYPE_LABELS[review.ownership_source_type as OwnershipSourceType] ?? review.ownership_source_type}`}
           </p>
-          {review.review_note && <p className="text-zinc-600">Note: {review.review_note}</p>}
+          {review.review_note && <p className="text-zinc-400">Note: {review.review_note}</p>}
           <a
             href={review.evidence_url}
             target="_blank"
             rel="noopener noreferrer nofollow"
-            className="break-all text-blue-700 underline underline-offset-2"
+            className="break-all text-sky-300 underline underline-offset-2"
           >
             {review.evidence_url}
           </a>
@@ -320,8 +320,8 @@ export default function AdminVettingQueue({ initial_submissions, recent_reviews 
             onClick={() => set_active_tab(tab.id)}
             className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
               active_tab === tab.id
-                ? "border-zinc-900 bg-zinc-900 text-white"
-                : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-900"
+                ? "border-zinc-100 bg-zinc-100 text-zinc-950"
+                : "border-hairline bg-surface-card text-zinc-300 hover:border-zinc-500"
             }`}
           >
             {tab.label}
@@ -333,7 +333,7 @@ export default function AdminVettingQueue({ initial_submissions, recent_reviews 
         {active_tab === "recent" ? (
           <RecentReviews reviews={recent_reviews} />
         ) : submissions.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500">
+          <p className="rounded-xl border border-dashed border-zinc-700 px-4 py-10 text-center text-sm text-zinc-400">
             The queue is clear. No pending submissions.
           </p>
         ) : (
