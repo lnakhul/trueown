@@ -109,6 +109,7 @@ export function build_centroid_target(origin: TextOrigin): CorporateTarget {
     corporate_tier: 2,
     parent_entity: "",
     financial_backers: [],
+    ownership_source: null,
     address: origin.name,
     neighborhood: origin.is_address ? null : origin.name,
     latitude: origin.latitude,
