@@ -164,7 +164,17 @@ function BrandCard({ brand }: { brand: BrandForReview }) {
             {brand.market_names.length > 0 && ` in ${brand.market_names.join(", ")}`}
           </p>
         </div>
-        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge.classes}`}>{badge.label}</span>
+        <div className="flex flex-wrap gap-1.5">
+          {brand.open_reports > 0 && (
+            <Link
+              href="/admin/corrections"
+              className="rounded-full bg-red-500/10 px-2.5 py-0.5 text-xs font-semibold text-red-300 underline-offset-2 hover:underline"
+            >
+              {brand.open_reports} open error report{brand.open_reports === 1 ? "" : "s"}
+            </Link>
+          )}
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge.classes}`}>{badge.label}</span>
+        </div>
       </div>
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 border-t border-hairline pt-3 text-sm">

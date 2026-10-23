@@ -172,7 +172,8 @@ async function cache_set(key: string, value: GeocodeResult): Promise<void> {
 /* Provider                                                                    */
 /* ------------------------------------------------------------------------- */
 
-function geocoder_base_url(): string {
+/** Provider origin (GEOCODER_BASE_URL, https only; defaults to Nominatim). Shared with the import CLI. */
+export function geocoder_base_url(): string {
   const configured = process.env.GEOCODER_BASE_URL?.trim();
   if (!configured) return DEFAULT_GEOCODER_BASE_URL;
   try {
@@ -181,6 +182,11 @@ function geocoder_base_url(): string {
   } catch {
     return DEFAULT_GEOCODER_BASE_URL;
   }
+}
+
+/** Identifying User-Agent required by the Nominatim usage policy. */
+export function geocoder_user_agent(): string {
+  return process.env.GEOCODER_USER_AGENT?.trim() || DEFAULT_USER_AGENT;
 }
 
 function max_provider_requests_per_second(): number {
@@ -209,7 +215,7 @@ async function query_provider(query: string): Promise<GeocodeResult> {
   try {
     response = await fetch(url, {
       headers: {
-        "User-Agent": process.env.GEOCODER_USER_AGENT?.trim() || DEFAULT_USER_AGENT,
+        "User-Agent": geocoder_user_agent(),
         Accept: "application/json",
       },
       signal: AbortSignal.timeout(GEOCODER_TIMEOUT_MS),

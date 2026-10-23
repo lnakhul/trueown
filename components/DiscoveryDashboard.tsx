@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import CorrectionPanel, { type ReportedListing } from "@/components/CorrectionPanel";
 import SubmissionPanel from "@/components/SubmissionPanel";
 import { GEOLOCATION_CACHE_TTL_MS } from "@/lib/geolocation-cache";
 import type { AlternativeRecommendation } from "@/lib/types";
@@ -63,6 +65,7 @@ export default function DiscoveryDashboard() {
 
   const is_desktop = use_media_query(DESKTOP_MEDIA_QUERY);
   const [is_panel_open, set_is_panel_open] = useState(false);
+  const [reported_listing, set_reported_listing] = useState<ReportedListing | null>(null);
   const [is_sheet_open, set_is_sheet_open] = useState(false);
   const [active_alternative_id, set_active_alternative_id] = useState<string | null>(null);
   const [scroll_request, set_scroll_request] = useState<ScrollRequest | null>(null);
@@ -232,7 +235,7 @@ export default function DiscoveryDashboard() {
       {/* Desktop: the selected profile and its alternatives render inline. */}
       {is_desktop && selected_result && (
         <div key={selected_result.target.location_id} className="space-y-6">
-          <CorporateProfileCard target={selected_result.target} />
+          <CorporateProfileCard target={selected_result.target} on_report_error={() => report_error_for(selected_result.target)} />
           <AlternativesCarousel
             heading={LOCAL_ALTERNATIVES_HEADING}
             heading_id="alternatives-heading"
@@ -260,8 +263,12 @@ export default function DiscoveryDashboard() {
     </div>
   );
 
+  function report_error_for(target: { location_id: string; brand_name: string; address: string }): void {
+    set_reported_listing({ location_id: target.location_id, brand_name: target.brand_name, address: target.address });
+  }
+
   const footer = (
-    <div className="flex justify-center">
+    <div className="flex flex-col items-center gap-3">
       <button
         type="button"
         onClick={() => set_is_panel_open(true)}
@@ -269,6 +276,12 @@ export default function DiscoveryDashboard() {
       >
         Know of an ownership change? Submit a tip
       </button>
+      <Link
+        href="/how-we-classify"
+        className="inline-flex min-h-11 items-center text-sm font-medium text-zinc-400 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+      >
+        How we classify businesses
+      </Link>
     </div>
   );
 
@@ -290,7 +303,11 @@ export default function DiscoveryDashboard() {
             .join(" · ")}
         >
           <div key={selected_result.target.location_id} className="space-y-5">
-            <CorporateProfileCard target={selected_result.target} variant="summary" />
+            <CorporateProfileCard
+              target={selected_result.target}
+              variant="summary"
+              on_report_error={() => report_error_for(selected_result.target)}
+            />
             <AlternativesCarousel
               heading={LOCAL_ALTERNATIVES_HEADING}
               heading_id="sheet-alternatives-heading"
@@ -305,6 +322,7 @@ export default function DiscoveryDashboard() {
       )}
 
       <SubmissionPanel is_open={is_panel_open} on_close={() => set_is_panel_open(false)} />
+      <CorrectionPanel listing={reported_listing} on_close={() => set_reported_listing(null)} />
     </>
   );
 }

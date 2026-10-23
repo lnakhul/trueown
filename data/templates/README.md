@@ -46,6 +46,22 @@ The import is **all-or-nothing**: any invalid row, tier conflict or database err
 Example Roasters,coffee_bakery,3,,Family-run roaster since 1987,state_business_registry,https://apps.dos.ny.gov/publicInquiry/,2026-10-01,"1 Example St, New York, NY 10001",,nyc,40.7506,-73.9972
 ```
 
+## Address-only files (geocoding)
+
+You can leave `latitude` and `longitude` blank and let the geocoder fill them from the street address:
+
+```bash
+npm run db:geocode:venues -- data/markets/nyc/venues.csv
+# -> data/markets/nyc/venues.geocoded.csv         (the same rows, with coordinates filled where safe)
+# -> data/markets/nyc/venues.geocode-report.csv   (one line per row: filled / needs_review / not_found / error)
+npm run db:import:venues -- data/markets/nyc/venues.geocoded.csv --dry-run
+```
+
+- Only **exact house-number matches** inside the row's market are filled. A street-level guess, a match in another city, or an address without a house number is left blank and listed in the report for you to fix by hand.
+- Rows that already have coordinates are never changed.
+- It uses OpenStreetMap's Nominatim: about one address per second, cached in `.cache/geocode-venues.json` so re-runs are fast. Set `GEOCODER_USER_AGENT` to include your contact email, as their usage policy asks.
+- Check a few filled rows on a map before importing; the import itself still checks every point against the neighborhood boundaries.
+
 ## Brand-only file
 
 `brands_template.csv` is the header for `npm run db:import:brands`: one row per brand, no storefronts. `financial_backers` is a comma- or semicolon-separated list of named investors (commas inside parentheses are kept; `none` means empty; Tier 3 rows are stored as none) and is shown on the Tier 1/2 alert banner, so only list investors you can cite. An optional trailing `market` column sets a Tier 3 brand's home market (blank = taken from its first storefront). Keep unsourced working files out of git (`data/**/vetted_*.csv` and `*_draft.csv` are ignored).

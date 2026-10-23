@@ -5,10 +5,17 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Fixed
+- On phones the map drew over the report form: Leaflet's layers are now contained in the map (`isolation: isolate`), so they can never cover dialogs or the bottom sheet.
 - The map showed "API KEY REQUIRED" tiles: CARTO's basemaps now require a key. The default is now keyless OpenStreetMap tiles darkened with a CSS filter (markers keep their colors), and any provider can be configured with `NEXT_PUBLIC_MAP_TILE_*`.
 - Migration `20261025000000_05_admin_audit.sql` failed on Supabase with `type "geometry" does not exist`: the SECURITY DEFINER vetting routines pinned `search_path` to `public` while Supabase installs PostGIS in `extensions`. They now pin `public, extensions, pg_temp`, and the migration is safe to re-run. CI also applies every migration to a Supabase-layout database.
 
 ### Added
+- Address-only imports: `npm run db:geocode:venues -- <file.csv>` fills blank coordinates from street addresses and writes a `.geocoded.csv` to review plus a per-row report. Only exact house-number matches inside the row's market are filled; street-level or out-of-market matches are left blank and flagged. Follows the Nominatim policy (1 request/second, identifying User-Agent) with a local cache. The importer now explains how to fill blank coordinates.
+- Public **How we classify** page (`/how-we-classify`): tier definitions, accepted evidence per tier, how claims are added and kept current, and how to report an error. Linked from every corporate card and the page footer.
+- **Report an error** on every corporate card: owners, staff or visitors pick what is wrong and how they know the business, describe it, and can add an evidence link and a contact email (admins only). Protected like tips (honeypot, Turnstile, 5 per hour per client).
+- Admin **Error reports** inbox (`/admin/corrections`): open reports oldest first, with a link to the brand; close as resolved or dismissed (a dismissal needs a reason). Brands with open reports are listed first on the Brands page.
+- Migration `20261027000000_07_correction_requests.sql`: `correction_requests` (public insert of open reports only, admin-only read) and the audited, admin-only `resolve_correction_request()`.
+
 - Public ownership sources: every corporate card shows the evidence type, a link to it and the month it was verified; claims checked over a year ago say ownership may have changed, and unsourced claims say "Not yet recorded".
 - Admin **Brands** page (`/admin/brands`): lists claims with no source or a source older than 12 months first, with search and an "All brands" view. **Re-verify** records fresh evidence for the same claim; **Correct claim** changes tier, parent or backers and requires new evidence and a reason.
 - Migration `20261026000000_06_brand_reverification.sql`: audited, admin-only `reverify_brand()` / `correct_brand()` (before/after kept in `admin_audit_log`, which now has a `brand_id` column). Direct `INSERT/UPDATE/DELETE` on `brands` and `locations` is revoked for every API role, admins included: public claims change only through audited routines or the import CLIs.

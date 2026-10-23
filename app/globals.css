@@ -38,6 +38,9 @@
 .leaflet-container {
   background: #09090b;
   font-family: inherit;
+  /* Leaflet's panes use z-index 400-1000; keep them inside the map so they can
+     never draw over dialogs, the bottom sheet or the report panel. */
+  isolation: isolate;
 }
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {

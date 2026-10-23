@@ -17,6 +17,8 @@ export interface BrandForReview {
   storefront_count: number;
   market_names: string[];
   source: OwnershipSource | null;
+  /** Open "Report an error" requests about this brand. */
+  open_reports: number;
   last_action: { action: string; actor_email: string | null; at: string } | null;
 }
 
@@ -75,6 +77,7 @@ interface BrandRow {
   industry_vertical: IndustryVertical;
   home_market: string | null;
   storefront_count: number;
+  open_reports: number;
   market_names: string[] | null;
   ownership_source_type: string | null;
   ownership_source_url: string | null;
@@ -85,8 +88,9 @@ interface BrandRow {
 }
 
 /**
- * Live brands for the admin review page. "needs_review" = no recorded source, or
- * verified more than PROVENANCE_STALE_AFTER_DAYS ago. Unsourced first, then oldest.
+ * Live brands for the admin review page. "needs_review" = an open error report, no
+ * recorded source, or verified more than PROVENANCE_STALE_AFTER_DAYS ago. Reported
+ * brands first, then unsourced, then oldest.
  */
 export async function fetch_brands_for_review(
   admin: AdminIdentity,
@@ -101,6 +105,7 @@ export async function fetch_brands_for_review(
         `SELECT b.id, b.name, b.corporate_tier, b.parent_entity, b.financial_backers, b.industry_vertical,
                 hm.slug AS home_market,
                 (SELECT count(*)::int FROM locations l WHERE l.brand_id = b.id) AS storefront_count,
+                (SELECT count(*)::int FROM correction_requests c WHERE c.brand_id = b.id AND c.status = 'open') AS open_reports,
                 (SELECT array_agg(DISTINCT m.city_name ORDER BY m.city_name)
                    FROM locations l JOIN markets m ON m.id = l.market_id WHERE l.brand_id = b.id) AS market_names,
                 b.ownership_source_type, b.ownership_source_url,
@@ -114,9 +119,11 @@ export async function fetch_brands_for_review(
            ) a ON true
           WHERE ($1 = 'all'
                  OR b.ownership_source_url IS NULL
+                 OR EXISTS (SELECT 1 FROM correction_requests c WHERE c.brand_id = b.id AND c.status = 'open')
                  OR b.ownership_verified_on < current_date - $2::int)
             AND ($3::text IS NULL OR strpos(lower(b.name), lower($3)) > 0)
-          ORDER BY (b.ownership_source_url IS NULL) DESC, b.ownership_verified_on ASC NULLS FIRST,
+          ORDER BY EXISTS (SELECT 1 FROM correction_requests c WHERE c.brand_id = b.id AND c.status = 'open') DESC,
+                   (b.ownership_source_url IS NULL) DESC, b.ownership_verified_on ASC NULLS FIRST,
                    b.corporate_tier, b.name
           LIMIT $4`,
         [options.filter ?? "needs_review", PROVENANCE_STALE_AFTER_DAYS, search, MAX_BRANDS_PER_PAGE],
@@ -130,6 +137,7 @@ export async function fetch_brands_for_review(
         industry_vertical: row.industry_vertical,
         home_market: row.home_market,
         storefront_count: row.storefront_count,
+        open_reports: row.open_reports,
         market_names: row.market_names ?? [],
         source:
           row.ownership_source_type && row.ownership_source_url && row.ownership_verified_on

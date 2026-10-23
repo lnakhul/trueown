@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { format_verified_month, provenance_status, source_type_label } from "@/lib/provenance";
 import type { CorporateTarget } from "@/lib/types";
 import { AlertIcon } from "./icons";
@@ -11,10 +12,12 @@ interface CorporateProfileCardProps {
   target: CorporateTarget;
   /** "summary" drops the brand heading (the bottom sheet shows it in its title bar). */
   variant?: "full" | "summary";
+  /** Opens the "Report an error" form for this listing. */
+  on_report_error?: () => void;
 }
 
 /** Ownership profile for a corporate-backed storefront. Wording stays factual. */
-export default function CorporateProfileCard({ target, variant = "full" }: CorporateProfileCardProps) {
+export default function CorporateProfileCard({ target, variant = "full", on_report_error }: CorporateProfileCardProps) {
   const source = target.ownership_source ?? null;
   const status = provenance_status(source);
   return (
@@ -78,6 +81,23 @@ export default function CorporateProfileCard({ target, variant = "full" }: Corpo
             )}
           </dd>
         </dl>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline pt-2 text-xs">
+          {on_report_error && (
+            <button
+              type="button"
+              onClick={on_report_error}
+              className="inline-flex min-h-11 items-center font-medium text-zinc-400 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+            >
+              Report an error
+            </button>
+          )}
+          <Link
+            href="/how-we-classify"
+            className="inline-flex min-h-11 items-center font-medium text-zinc-400 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
+          >
+            How we classify
+          </Link>
+        </div>
       </div>
     </section>
   );
