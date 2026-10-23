@@ -26,7 +26,8 @@
     "db:import:boundaries": "tsx scripts/import-boundaries.ts",
     "db:import:venues": "tsx scripts/import-venues.ts",
     "db:import:brands": "tsx scripts/import-brands.ts",
-    "db:import:markets": "tsx scripts/import-markets.ts"
+    "db:import:markets": "tsx scripts/import-markets.ts",
+    "admin:grant": "tsx scripts/grant-admin.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^11.8.0",

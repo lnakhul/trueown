@@ -45,7 +45,8 @@ services:
       - ./supabase/migrations/20261022000000_brand_financial_backers.sql:/docker-entrypoint-initdb.d/06_brand_financial_backers.sql:ro
       - ./supabase/migrations/20261023000000_03_regional_markets.sql:/docker-entrypoint-initdb.d/07_regional_markets.sql:ro
       - ./supabase/migrations/20261024000000_04_market_scoped_data.sql:/docker-entrypoint-initdb.d/08_market_scoped_data.sql:ro
-      - ./supabase/seed.sql:/docker-entrypoint-initdb.d/09_seed.sql:ro
+      - ./supabase/migrations/20261025000000_05_admin_audit.sql:/docker-entrypoint-initdb.d/09_admin_audit.sql:ro
+      - ./supabase/seed.sql:/docker-entrypoint-initdb.d/10_seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d trueown"]
       interval: 5s
