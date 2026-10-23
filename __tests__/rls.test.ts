@@ -359,3 +359,24 @@ describe("proximity filtering is unaffected by RLS", () => {
     });
   });
 });
+
+describe("SECURITY DEFINER routines", () => {
+  // On Supabase PostGIS lives in the `extensions` schema. A definer routine that pins
+  // search_path without it fails there ("type geometry does not exist") while passing
+  // locally, where PostGIS sits in `public`.
+  test("every pinned search_path includes the extensions schema", async () => {
+    const result = await test_pool.query<{ name: string; config: string[] | null }>(
+      `SELECT p.oid::regprocedure::text AS name, p.proconfig AS config
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public' AND p.prosecdef`,
+    );
+    expect(result.rows.length).toBeGreaterThan(0);
+    for (const routine of result.rows) {
+      const search_path = (routine.config ?? []).find((setting) => setting.startsWith("search_path="));
+      expect({ routine: routine.name, search_path }).toEqual({
+        routine: routine.name,
+        search_path: expect.stringMatching(/^search_path=.*\bextensions\b/),
+      });
+    }
+  });
+});
