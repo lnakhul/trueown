@@ -76,3 +76,39 @@
   background: transparent;
   border: none;
 }
+
+/* Discovery layout: stacked on phones (controls, map, results); at md the map
+   becomes a sticky right-hand column beside controls and results. */
+.discovery-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "controls" "map" "results";
+  gap: 1.5rem;
+}
+.discovery-grid__controls {
+  grid-area: controls;
+}
+.discovery-grid__map {
+  grid-area: map;
+}
+.discovery-grid__results {
+  grid-area: results;
+}
+@media (min-width: 768px) {
+  .discovery-grid {
+    grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "controls map" "results map";
+    column-gap: 2rem;
+  }
+  .discovery-grid__map {
+    position: sticky;
+    top: 1.5rem;
+    align-self: start;
+  }
+}
+@media (min-width: 1024px) {
+  .discovery-grid {
+    grid-template-columns: minmax(0, 30rem) minmax(0, 1fr);
+  }
+}
