@@ -2,9 +2,9 @@ import type { Pool } from "pg";
 import type { AdminIdentity } from "@/lib/auth/admin-session";
 import { with_admin_claims } from "@/lib/db/as-admin";
 import { get_database_pool } from "@/lib/db/pool";
-import type { AddIndependentInput } from "@/lib/storefront-review";
+import type { AddCorporateBrandInput, AddIndependentInput } from "@/lib/storefront-review";
 
-export type StorefrontQueueView = "chains" | "possible" | "independents";
+export type StorefrontQueueView = "chains" | "possible" | "independents" | "rejected";
 
 export interface StorefrontCandidate {
   id: string;
@@ -35,6 +35,13 @@ export interface IndependentGroup {
   candidates: StorefrontCandidate[];
 }
 
+export interface RejectedGroup {
+  name: string;
+  reason: string | null;
+  reviewed_at: string | null;
+  candidates: StorefrontCandidate[];
+}
+
 export interface StorefrontQueue {
   counts: Record<StorefrontQueueView, number>;
   chains: ChainGroup[];
@@ -42,6 +49,8 @@ export interface StorefrontQueue {
   independents: IndependentGroup[];
   /** True when more independent groups exist than were returned. */
   independents_truncated: boolean;
+  /** Rejected shops grouped by name and reason, most recently rejected first. */
+  rejected: RejectedGroup[];
 }
 
 export const MAX_INDEPENDENT_GROUPS = 150;
@@ -71,6 +80,9 @@ function translate_storefront_error(caught_error: unknown): never {
     ["note_required", "Give a reason for rejecting.", 422],
     ["invalid_batch", "Choose between 1 and 500 storefronts.", 422],
     ["independent_market_mismatch", "That independent belongs to another market.", 422],
+    ["candidate_not_rejected", "Some of these storefronts are no longer rejected. Reload the page.", 409],
+    ["parent_required", "Enter the owner or lead investor.", 422],
+    ["invalid_tier", "Choose Tier 1 or Tier 2.", 422],
   ];
   for (const [code, text, status] of known) {
     if (message.includes(code)) throw new StorefrontChangeRejectedError(text, status);
@@ -181,8 +193,44 @@ export async function fetch_storefront_queue(
       }
       const independent_groups = [...independents.values()];
 
+      const rejected_count = await client.query<{ total: number }>(
+        `SELECT count(*)::int AS total
+           FROM storefront_candidates c JOIN markets m ON m.id = c.market_id AND m.slug = $1
+          WHERE c.status = 'rejected'
+            AND ($2::text IS NULL OR strpos(lower(c.name), $2) > 0 OR strpos(lower(c.address), $2) > 0)`,
+        [market_slug, term],
+      );
+      const rejected_rows = await client.query<CandidateRow & { reason: string | null; reviewed_at: Date | null }>(
+        `SELECT c.id, c.name, c.address, c.borough, c.category, c.latitude, c.longitude,
+                NULL::uuid AS brand_id, NULL::text AS brand_name, NULL::int AS corporate_tier,
+                c.review_note AS reason, c.reviewed_at
+           FROM storefront_candidates c JOIN markets m ON m.id = c.market_id AND m.slug = $1
+          WHERE c.status = 'rejected'
+            AND ($2::text IS NULL OR strpos(lower(c.name), $2) > 0 OR strpos(lower(c.address), $2) > 0)
+          ORDER BY c.reviewed_at DESC NULLS LAST, lower(btrim(c.name)), c.address
+          LIMIT 2000`,
+        [market_slug, term],
+      );
+      const rejected = new Map<string, RejectedGroup>();
+      for (const row of rejected_rows.rows) {
+        const key = `${row.name.trim().toLowerCase()}|${row.reason ?? ""}`;
+        const group = rejected.get(key) ?? {
+          name: row.name,
+          reason: row.reason,
+          reviewed_at: row.reviewed_at ? row.reviewed_at.toISOString() : null,
+          candidates: [],
+        };
+        group.candidates.push(to_candidate(row));
+        rejected.set(key, group);
+      }
+
       return {
-        counts: { chains: count_of("exact"), possible: count_of("possible"), independents: count_of("none") },
+        counts: {
+          chains: count_of("exact"),
+          possible: count_of("possible"),
+          independents: count_of("none"),
+          rejected: rejected_count.rows[0]?.total ?? 0,
+        },
         chains: [...chains.values()],
         possible: possible_rows.rows.map((row) => ({
           ...to_candidate(row),
@@ -192,6 +240,7 @@ export async function fetch_storefront_queue(
         })),
         independents: independent_groups.slice(0, MAX_INDEPENDENT_GROUPS),
         independents_truncated: independent_groups.length > MAX_INDEPENDENT_GROUPS,
+        rejected: [...rejected.values()].slice(0, MAX_INDEPENDENT_GROUPS),
       };
     },
     pool,
@@ -258,6 +307,63 @@ export async function add_independent(
           [input.candidate_id, input.brand_name, input.ownership_source_type, input.ownership_source_url],
         );
         return result.rows[0]?.location_id ?? "";
+      },
+      pool,
+    );
+  } catch (caught_error) {
+    translate_storefront_error(caught_error);
+  }
+}
+
+/** Creates a Tier 1/2 brand with its evidence; its same-named shops become chain matches. */
+export async function add_corporate_brand(
+  admin: AdminIdentity,
+  input: AddCorporateBrandInput,
+  pool: Pool = get_database_pool(),
+): Promise<{ brand_id: string; moved_to_chain_matches: number }> {
+  try {
+    return await with_admin_claims(
+      admin.claims,
+      async (client) => {
+        const result = await client.query<{ brand_id: string; moved_to_chain_matches: number }>(
+          "SELECT * FROM add_corporate_brand_from_candidates($1, $2, $3, $4, $5, $6, $7)",
+          [
+            input.candidate_id,
+            input.brand_name,
+            input.corporate_tier,
+            input.parent_entity,
+            input.financial_backers,
+            input.ownership_source_type,
+            input.ownership_source_url,
+          ],
+        );
+        const row = result.rows[0];
+        if (!row) throw new Error("add_corporate_brand_from_candidates returned no row.");
+        return row;
+      },
+      pool,
+    );
+  } catch (caught_error) {
+    translate_storefront_error(caught_error);
+  }
+}
+
+/** Undoes rejections: the shops go back to the queue and are re-matched against current brands. */
+export async function reopen_storefronts(
+  admin: AdminIdentity,
+  candidate_ids: string[],
+  note: string | null,
+  pool: Pool = get_database_pool(),
+): Promise<number> {
+  try {
+    return await with_admin_claims(
+      admin.claims,
+      async (client) => {
+        const result = await client.query<{ reopened: number }>(
+          "SELECT reopen_storefront_candidates($1::uuid[], $2) AS reopened",
+          [candidate_ids, note],
+        );
+        return result.rows[0]?.reopened ?? 0;
       },
       pool,
     );
