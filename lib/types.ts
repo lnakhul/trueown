@@ -65,7 +65,9 @@ export interface NearbyCorporateResult {
 export interface NearbyResponse {
   origin:
     | { kind: "coordinates"; latitude: number; longitude: number }
-    | { kind: "neighborhood"; neighborhood: string; latitude: number; longitude: number };
+    | { kind: "neighborhood"; neighborhood: string; latitude: number; longitude: number }
+    /** A street address resolved by the geocoder; `label` is the text the user typed. */
+    | { kind: "address"; label: string; latitude: number; longitude: number };
   radius_meters: number;
   results: NearbyCorporateResult[];
   /**

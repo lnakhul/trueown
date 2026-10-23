@@ -5,6 +5,9 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Added
+- Text search accepts full street addresses: neighborhood names resolve to NTA centroids first, anything else falls back to a Nominatim geocoder (1 req/s, 4s timeout) cached in Upstash Redis for 30 days (in-memory fallback). Results outside every active market return `outside_active_market`; provider failures return a 503 JSON error.
+- `lib/telemetry.ts` non-blocking proximity-search events (`market_id`, `industry_vertical`, `search_type`; no coordinates or text), registered via `instrumentation.ts` with a Sentry metrics sink. Failures are swallowed and never delay responses. On serverless hosts delivery is best-effort because it is not awaited.
+- Tests G (geocoding/centroid router) and H (telemetry isolation).
 - `markets` table (migration `20261023000000_03_regional_markets.sql`) seeded with New York City (active), Austin and Chicago (coming soon); `locations.market_id` is assigned automatically from coordinates within 50 miles.
 - `outside_active_market` API response naming the closest active market, with a matching notice in the UI.
 - Venue importer validates each storefront against the markets table and warns when a market is not active.

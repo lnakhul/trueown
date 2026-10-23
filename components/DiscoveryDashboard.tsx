@@ -283,16 +283,34 @@ function CorporateResultView({ result }: { result: NearbyCorporateResult }) {
   );
 }
 
-/** Map anchor for a neighborhood centroid (no corporate brand involved). */
-function build_centroid_target(origin: Extract<NearbyResponse["origin"], { kind: "neighborhood" }>): CorporateTarget {
+/** A text-search origin: a neighborhood centroid or a geocoded street address. */
+interface TextOrigin {
+  name: string;
+  is_address: boolean;
+  latitude: number;
+  longitude: number;
+}
+
+function to_text_origin(origin: NearbyResponse["origin"]): TextOrigin | null {
+  if (origin.kind === "neighborhood") {
+    return { name: origin.neighborhood, is_address: false, latitude: origin.latitude, longitude: origin.longitude };
+  }
+  if (origin.kind === "address") {
+    return { name: origin.label, is_address: true, latitude: origin.latitude, longitude: origin.longitude };
+  }
+  return null;
+}
+
+/** Map anchor for a searched point (no corporate brand involved). */
+function build_centroid_target(origin: TextOrigin): CorporateTarget {
   return {
-    location_id: `centroid:${origin.neighborhood}`,
-    brand_name: `${origin.neighborhood} (centre)`,
+    location_id: `centroid:${origin.name}`,
+    brand_name: origin.is_address ? origin.name : `${origin.name} (centre)`,
     corporate_tier: 2,
     parent_entity: "",
     financial_backers: [],
-    address: origin.neighborhood,
-    neighborhood: origin.neighborhood,
+    address: origin.name,
+    neighborhood: origin.is_address ? null : origin.name,
     latitude: origin.latitude,
     longitude: origin.longitude,
     distance_meters: null,
@@ -365,7 +383,7 @@ export default function DiscoveryDashboard() {
       const { payload } = cached_state;
       set_mode(cached_state.source === "device" ? "located" : "fallback");
       set_active_neighborhood(
-        payload.origin.kind === "neighborhood" ? payload.origin.neighborhood : null,
+        to_text_origin(payload.origin)?.name ?? null,
       );
       set_cached_at_ms(cached_state.saved_at_ms);
       set_selected_index(0);
@@ -511,7 +529,7 @@ export default function DiscoveryDashboard() {
               latitude: current_origin.latitude.toFixed(4),
               longitude: current_origin.longitude.toFixed(4),
             }
-          : { kind: "neighborhood", name: current_origin.neighborhood },
+          : { kind: "neighborhood", name: to_text_origin(current_origin)?.name ?? "" },
         next_scope,
       ),
     );
@@ -553,7 +571,7 @@ export default function DiscoveryDashboard() {
   const payload = fetch_state.status === "success" ? fetch_state.payload : null;
   const results = payload?.results ?? [];
   const selected_result = results[selected_index] ?? results[0];
-  const centroid_origin = payload?.origin.kind === "neighborhood" ? payload.origin : null;
+  const centroid_origin = payload ? to_text_origin(payload.origin) : null;
   const suggestions_visible =
     suggestions.length > 0 && search_text.trim().toLowerCase() !== suggestions[0]?.toLowerCase();
   const cache_age_minutes =
@@ -630,7 +648,7 @@ export default function DiscoveryDashboard() {
                 onKeyDown={handle_search_keydown}
                 value={search_text}
                 onChange={(event) => set_search_text(event.target.value)}
-                placeholder="e.g. West Village, Astoria…"
+                placeholder="e.g. West Village or 186 W 4th St"
                 maxLength={100}
                 autoComplete="off"
                 aria-label="Neighborhood name"
@@ -734,7 +752,7 @@ export default function DiscoveryDashboard() {
         {payload && results.length === 0 && payload.origin_alternatives.length === 0 && (
           <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-8 text-center text-sm text-zinc-500">
             {centroid_origin
-              ? `No tracked Tier 1 or Tier 2 brands, or independents, near ${centroid_origin.neighborhood} yet.`
+              ? `No tracked Tier 1 or Tier 2 brands, or independents, near ${centroid_origin.name} yet.`
               : "No tracked corporate-backed brands near you yet. Try a neighborhood instead."}
           </p>
         )}
@@ -774,7 +792,7 @@ export default function DiscoveryDashboard() {
               />
             </div>
             <AlternativesSlider
-              heading={`Independent spots within 1500m of the centre of ${centroid_origin.neighborhood}.`}
+              heading={`Independent spots within 1500m of ${centroid_origin.is_address ? "" : "the centre of "}${centroid_origin.name}.`}
               alternatives={payload.origin_alternatives}
             />
           </div>
