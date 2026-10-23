@@ -2,6 +2,7 @@ import { parse } from "csv-parse/sync";
 import type { Pool, PoolClient } from "pg";
 import { INDUSTRY_VERTICALS, type IndustryVertical } from "@/lib/types";
 import { validate_evidence_url } from "@/lib/validation";
+import { CORPORATE_SOURCE_TYPES, INDEPENDENT_SOURCE_TYPES } from "@/lib/provenance";
 
 /** Columns every venues CSV must have; data/templates/venues_template.csv adds `market`. */
 export const VENUE_CSV_COLUMNS = [
@@ -37,27 +38,7 @@ export type VenueCsvColumn = (typeof VENUE_CSV_COLUMNS)[number] | (typeof OPTION
 
 export { INDUSTRY_VERTICALS };
 
-/**
- * Where each tier may be verified. Must stay in sync with the CHECK constraint on
- * brands.ownership_source_type. Tier 1/2 claims need corporate-record evidence;
- * Tier 3 claims need registry, editorial or community evidence.
- */
-export const CORPORATE_SOURCE_TYPES = [
-  "sec_edgar",
-  "investor_press_release",
-  "pitchbook",
-  "crunchbase",
-  "mergr",
-  "reputable_news",
-] as const;
-export const INDEPENDENT_SOURCE_TYPES = [
-  "state_business_registry",
-  "local_press",
-  "community_consensus",
-  // Legacy NYC-specific values, still accepted.
-  "nys_dos_corporations",
-  "eater_ny",
-] as const;
+export { CORPORATE_SOURCE_TYPES, INDEPENDENT_SOURCE_TYPES };
 
 const MARKET_SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const MAX_CSV_ROWS = 5000;
