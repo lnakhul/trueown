@@ -1,0 +1,459 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { FormEvent, useState } from "react";
+import type {
+  ChainGroup,
+  IndependentGroup,
+  PossibleMatch,
+  StorefrontCandidate,
+  StorefrontQueue,
+  StorefrontQueueView,
+} from "@/lib/db/storefronts";
+import { INDEPENDENT_SOURCE_TYPES, SOURCE_TYPE_LABELS } from "@/lib/provenance";
+import type { ApiErrorResponse } from "@/lib/types";
+
+const MAX_BATCH = 500;
+const TIER_LABELS: Record<number, string> = { 1: "Tier 1 · PE owned", 2: "Tier 2 · VC funded", 3: "Tier 3 · Independent" };
+const REJECT_REASONS = [
+  "A chain we don't track",
+  "Not a coffee or bakery business",
+  "Closed, duplicate or not a public storefront",
+];
+const LEGACY_SOURCE_TYPES = ["nys_dos_corporations", "eater_ny"];
+
+const input_classes =
+  "w-full rounded-lg border border-hairline bg-surface-page px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-500";
+const secondary_button =
+  "min-h-11 rounded-lg border border-hairline px-3 py-2 text-sm font-semibold text-zinc-200 transition-colors hover:border-zinc-500 disabled:cursor-wait disabled:opacity-50";
+const primary_button =
+  "min-h-11 rounded-lg bg-independent px-4 py-2 text-sm font-semibold text-zinc-950 transition-colors hover:bg-emerald-300 disabled:cursor-wait disabled:bg-zinc-800 disabled:text-zinc-500";
+
+async function post(path: string, body: unknown): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/admin/storefronts/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (response.ok) return null;
+    const failure = (await response.json().catch(() => null)) as ApiErrorResponse | null;
+    return failure?.error ?? `Request failed (${response.status}).`;
+  } catch {
+    return "Network error. Try again.";
+  }
+}
+
+/** Sends ids in chunks the database accepts; stops at the first failure. */
+async function post_in_batches(path: string, ids: string[], extra: Record<string, unknown>): Promise<string | null> {
+  for (let start = 0; start < ids.length; start += MAX_BATCH) {
+    const failure = await post(path, { candidate_ids: ids.slice(start, start + MAX_BATCH), ...extra });
+    if (failure) return failure;
+  }
+  return null;
+}
+
+function map_link(candidate: StorefrontCandidate): string | null {
+  if (candidate.latitude === null || candidate.longitude === null) return null;
+  return `https://www.openstreetmap.org/?mlat=${candidate.latitude}&mlon=${candidate.longitude}#map=19/${candidate.latitude}/${candidate.longitude}`;
+}
+
+function CandidateLine({ candidate }: { candidate: StorefrontCandidate }) {
+  const link = map_link(candidate);
+  return (
+    <span className="min-w-0">
+      <span className="text-zinc-200">{candidate.address}</span>
+      {candidate.name && <span className="text-zinc-500"> · listed as “{candidate.name}”</span>}
+      {link ? (
+        <a href={link} target="_blank" rel="noopener noreferrer" className="ml-2 text-xs text-sky-300 underline underline-offset-2">
+          map
+        </a>
+      ) : (
+        <span className="ml-2 text-xs text-corporate">no coordinates</span>
+      )}
+    </span>
+  );
+}
+
+function use_action() {
+  const router = useRouter();
+  const [is_busy, set_is_busy] = useState(false);
+  const [error_message, set_error_message] = useState<string | null>(null);
+  async function run(action: () => Promise<string | null>): Promise<boolean> {
+    set_is_busy(true);
+    set_error_message(null);
+    const failure = await action();
+    set_is_busy(false);
+    if (failure) {
+      set_error_message(failure);
+      return false;
+    }
+    router.refresh();
+    return true;
+  }
+  return { is_busy, error_message, run };
+}
+
+function ErrorLine({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">
+      {message}
+    </p>
+  );
+}
+
+function RejectForm({ ids, label, on_done }: { ids: string[]; label: string; on_done?: () => void }) {
+  const [reason, set_reason] = useState(REJECT_REASONS[0]!);
+  const { is_busy, error_message, run } = use_action();
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (await run(() => post_in_batches("reject", ids, { note: reason }))) on_done?.();
+  }
+  return (
+    <form onSubmit={(event) => void submit(event)} className="space-y-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <label className="flex-1 text-xs font-medium text-zinc-400">
+          Reason
+          <input
+            className={`${input_classes} mt-1`}
+            list="storefront-reject-reasons"
+            value={reason}
+            onChange={(event) => set_reason(event.target.value)}
+            maxLength={500}
+            required
+          />
+        </label>
+        <button type="submit" disabled={is_busy} className={`${secondary_button} self-end border-red-500/30 text-red-300 hover:bg-red-500/10`}>
+          {is_busy ? "Saving…" : label}
+        </button>
+      </div>
+      <ErrorLine message={error_message} />
+    </form>
+  );
+}
+
+function ChainCard({ group }: { group: ChainGroup }) {
+  const [show_list, set_show_list] = useState(false);
+  const [show_reject, set_show_reject] = useState(false);
+  const { is_busy, error_message, run } = use_action();
+  const placeable = group.candidates.filter((candidate) => candidate.latitude !== null);
+  const unplaceable = group.candidates.length - placeable.length;
+
+  return (
+    <li className="space-y-3 rounded-xl border border-hairline bg-surface-card p-5 shadow-hairline">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-50">{group.brand_name}</h2>
+          <p className="text-sm text-zinc-400">
+            {TIER_LABELS[group.corporate_tier] ?? `Tier ${group.corporate_tier}`} · {group.candidates.length} new storefront
+            {group.candidates.length === 1 ? "" : "s"}
+            {unplaceable > 0 && <span className="text-corporate"> · {unplaceable} without coordinates</span>}
+          </p>
+        </div>
+      </div>
+      <p className="text-sm text-zinc-500">
+        The brand&apos;s ownership claim and source are already on record; approving adds these storefronts to the map.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={is_busy || placeable.length === 0}
+          onClick={() => void run(() => post_in_batches("approve", placeable.map((candidate) => candidate.id), {}))}
+          className={primary_button}
+        >
+          {is_busy ? "Approving…" : `Approve all ${placeable.length}`}
+        </button>
+        <button type="button" onClick={() => set_show_list((open) => !open)} aria-expanded={show_list} className={secondary_button}>
+          {show_list ? "Hide storefronts" : "Review one by one"}
+        </button>
+        <button type="button" onClick={() => set_show_reject((open) => !open)} aria-expanded={show_reject} className={secondary_button}>
+          Reject…
+        </button>
+      </div>
+      <ErrorLine message={error_message} />
+      {show_reject && <RejectForm ids={group.candidates.map((candidate) => candidate.id)} label={`Reject all ${group.candidates.length}`} />}
+      {show_list && (
+        <ul className="divide-y divide-white/[0.06] border-t border-hairline text-sm">
+          {group.candidates.map((candidate) => (
+            <SingleCandidateRow key={candidate.id} candidate={candidate} brand_id={null} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function SingleCandidateRow({ candidate, brand_id }: { candidate: StorefrontCandidate; brand_id: string | null }) {
+  const [show_reject, set_show_reject] = useState(false);
+  const { is_busy, error_message, run } = use_action();
+  return (
+    <li className="space-y-2 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <CandidateLine candidate={candidate} />
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={is_busy || candidate.latitude === null}
+            onClick={() => void run(() => post("approve", { candidate_ids: [candidate.id], brand_id }))}
+            className={secondary_button}
+          >
+            Approve
+          </button>
+          <button type="button" onClick={() => set_show_reject((open) => !open)} className={secondary_button}>
+            Reject…
+          </button>
+        </div>
+      </div>
+      <ErrorLine message={error_message} />
+      {show_reject && <RejectForm ids={[candidate.id]} label="Reject" />}
+    </li>
+  );
+}
+
+function PossibleRow({ match }: { match: PossibleMatch }) {
+  const [show_reject, set_show_reject] = useState(false);
+  const { is_busy, error_message, run } = use_action();
+  return (
+    <li className="space-y-2 rounded-xl border border-hairline bg-surface-card p-4 shadow-hairline text-sm">
+      <p className="font-semibold text-zinc-50">
+        “{match.name}” — is this <span className="text-corporate">{match.brand_name}</span>?
+      </p>
+      <CandidateLine candidate={match} />
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button
+          type="button"
+          disabled={is_busy || match.latitude === null}
+          onClick={() => void run(() => post("approve", { candidate_ids: [match.id], brand_id: match.brand_id }))}
+          className={primary_button}
+        >
+          Yes, add to {match.brand_name}
+        </button>
+        <button type="button" onClick={() => set_show_reject((open) => !open)} className={secondary_button}>
+          No…
+        </button>
+      </div>
+      <ErrorLine message={error_message} />
+      {show_reject && <RejectForm ids={[match.id]} label="Reject" />}
+    </li>
+  );
+}
+
+function IndependentCard({ group }: { group: IndependentGroup }) {
+  const [panel, set_panel] = useState<"none" | "add" | "reject" | "list">("none");
+  const first_placeable = group.candidates.find((candidate) => candidate.latitude !== null) ?? null;
+  const [brand_name, set_brand_name] = useState(group.name);
+  const [source_type, set_source_type] = useState("");
+  const [source_url, set_source_url] = useState("");
+  const { is_busy, error_message, run } = use_action();
+  const looks_like_chain = group.location_count >= 5;
+
+  async function add(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!first_placeable) return;
+    await run(() =>
+      post("independent", {
+        candidate_id: first_placeable.id,
+        brand_name,
+        ownership_source_type: source_type,
+        ownership_source_url: source_url,
+      }),
+    );
+  }
+
+  return (
+    <li className="space-y-3 rounded-xl border border-hairline bg-surface-card p-4 shadow-hairline text-sm">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="font-semibold text-zinc-50">{group.name}</p>
+          <p className="text-zinc-500">
+            {group.location_count} location{group.location_count === 1 ? "" : "s"} · {group.candidates[0]?.category ?? "Uncategorized"}
+          </p>
+        </div>
+        {looks_like_chain && (
+          <span className="rounded-full bg-corporate-muted px-2.5 py-0.5 text-xs font-semibold text-corporate">
+            Many locations: check it is not a chain
+          </span>
+        )}
+      </div>
+      {group.location_count === 1 && group.candidates[0] && <CandidateLine candidate={group.candidates[0]} />}
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => set_panel((open) => (open === "add" ? "none" : "add"))} className={secondary_button}>
+          Add as independent…
+        </button>
+        <button type="button" onClick={() => set_panel((open) => (open === "reject" ? "none" : "reject"))} className={secondary_button}>
+          Reject{group.location_count > 1 ? ` all ${group.location_count}` : ""}…
+        </button>
+        {group.location_count > 1 && (
+          <button type="button" onClick={() => set_panel((open) => (open === "list" ? "none" : "list"))} className={secondary_button}>
+            {panel === "list" ? "Hide locations" : "Show locations"}
+          </button>
+        )}
+      </div>
+
+      {panel === "add" && (
+        <form onSubmit={(event) => void add(event)} className="space-y-3 border-t border-hairline pt-3">
+          <p className="text-zinc-400">
+            Calling a business independent is an ownership claim, so it needs evidence (for example its state business
+            registry record). {group.location_count > 1 && "Its other locations will then appear under Chain matches for approval."}
+          </p>
+          {!first_placeable && <p className="text-corporate">None of these locations has coordinates yet.</p>}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="text-xs font-medium text-zinc-400 sm:col-span-2">
+              Business name as it should appear
+              <input className={`${input_classes} mt-1`} value={brand_name} onChange={(event) => set_brand_name(event.target.value)} maxLength={200} required />
+            </label>
+            <label className="text-xs font-medium text-zinc-400">
+              Evidence type
+              <select className={`${input_classes} mt-1`} value={source_type} onChange={(event) => set_source_type(event.target.value)} required>
+                <option value="" disabled>
+                  Choose…
+                </option>
+                {INDEPENDENT_SOURCE_TYPES.filter((type) => !LEGACY_SOURCE_TYPES.includes(type)).map((type) => (
+                  <option key={type} value={type}>
+                    {SOURCE_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-zinc-400">
+              Evidence link
+              <input
+                className={`${input_classes} mt-1`}
+                type="url"
+                value={source_url}
+                onChange={(event) => set_source_url(event.target.value)}
+                placeholder="https://…"
+                required
+              />
+            </label>
+          </div>
+          <button type="submit" disabled={is_busy || !first_placeable} className={primary_button}>
+            {is_busy ? "Saving…" : "Publish as independent"}
+          </button>
+          <ErrorLine message={error_message} />
+        </form>
+      )}
+      {panel === "reject" && (
+        <RejectForm
+          ids={group.candidates.map((candidate) => candidate.id)}
+          label={group.location_count > 1 ? `Reject all ${group.location_count}` : "Reject"}
+        />
+      )}
+      {panel === "list" && (
+        <ul className="divide-y divide-white/[0.06] border-t border-hairline">
+          {group.candidates.map((candidate) => (
+            <li key={candidate.id} className="py-2">
+              <CandidateLine candidate={candidate} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+export default function AdminStorefrontQueue({
+  queue,
+  view,
+  search,
+}: {
+  queue: StorefrontQueue;
+  view: StorefrontQueueView;
+  search: string;
+}) {
+  const tabs: { id: StorefrontQueueView; label: string }[] = [
+    { id: "chains", label: `Chain matches (${queue.counts.chains})` },
+    { id: "possible", label: `Possible matches (${queue.counts.possible})` },
+    { id: "independents", label: `Possible independents (${queue.counts.independents})` },
+  ];
+  const href = (next: StorefrontQueueView) => `/admin/storefronts?view=${next}${search ? `&q=${encodeURIComponent(search)}` : ""}`;
+
+  return (
+    <div className="space-y-4">
+      <datalist id="storefront-reject-reasons">
+        {REJECT_REASONS.map((reason) => (
+          <option key={reason} value={reason} />
+        ))}
+      </datalist>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => (
+            <Link
+              key={tab.id}
+              href={href(tab.id)}
+              aria-current={tab.id === view ? "page" : undefined}
+              className={`inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-medium transition-colors ${
+                tab.id === view
+                  ? "border-zinc-100 bg-zinc-100 text-zinc-950"
+                  : "border-hairline bg-surface-card text-zinc-300 hover:border-zinc-500"
+              }`}
+            >
+              {tab.label}
+            </Link>
+          ))}
+        </div>
+        <form action="/admin/storefronts" method="get" role="search" className="flex gap-2">
+          <input type="hidden" name="view" value={view} />
+          <input name="q" defaultValue={search} maxLength={100} aria-label="Search by name or address" placeholder="Name or address" className={`${input_classes} min-h-11`} />
+          <button type="submit" className={`${secondary_button} shrink-0`}>
+            Search
+          </button>
+        </form>
+      </div>
+
+      {view === "chains" &&
+        (queue.chains.length === 0 ? (
+          <Empty text="No new storefronts for brands you track." />
+        ) : (
+          <ul className="space-y-4">
+            {queue.chains.map((group) => (
+              <ChainCard key={group.brand_id} group={group} />
+            ))}
+          </ul>
+        ))}
+
+      {view === "possible" &&
+        (queue.possible.length === 0 ? (
+          <Empty text="No possible matches to confirm." />
+        ) : (
+          <>
+            <p className="text-sm text-zinc-400">
+              These names look like a brand you track but are not an exact match. Confirm only when you are sure it is the
+              same business; “No” takes it off the queue.
+            </p>
+            <ul className="space-y-3">
+              {queue.possible.map((match) => (
+                <PossibleRow key={match.id} match={match} />
+              ))}
+            </ul>
+          </>
+        ))}
+
+      {view === "independents" &&
+        (queue.independents.length === 0 ? (
+          <Empty text="No possible independents left to review." />
+        ) : (
+          <>
+            <p className="text-sm text-zinc-400">
+              Shops that match no brand you track, grouped by name with the most locations first. Big groups are usually
+              chains you don&apos;t track yet: reject them, or add the brand with its evidence (
+              <code className="text-xs">npm run db:import:brands</code>) and re-run the storefront import so they show up
+              as chain matches.
+              {queue.independents_truncated && " Showing the first groups; search to find others."}
+            </p>
+            <ul className="space-y-3">
+              {queue.independents.map((group) => (
+                <IndependentCard key={group.name} group={group} />
+              ))}
+            </ul>
+          </>
+        ))}
+    </div>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return <p className="rounded-xl border border-dashed border-zinc-700 px-4 py-10 text-center text-sm text-zinc-400">{text}</p>;
+}
