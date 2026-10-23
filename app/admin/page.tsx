@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { report_error } from "@/lib/monitoring";
+import AdminHeader from "@/components/AdminHeader";
 import AdminVettingQueue from "@/components/AdminVettingQueue";
 import { resolve_request_admin } from "@/lib/auth/admin-session";
 import {
@@ -44,19 +45,7 @@ export default async function AdminPage() {
 
   return (
     <main className="mx-auto w-full max-w-4xl space-y-6 px-4 py-8 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-zinc-400">
-        <span>
-          Signed in as <span className="font-medium text-zinc-50">{admin.email ?? admin.actor_id}</span>
-          {admin.mode === "local_basic" && " (local development)"}
-        </span>
-        {admin.mode === "supabase" && (
-          <form action="/auth/signout" method="post">
-            <button type="submit" className="min-h-11 font-medium text-zinc-400 underline hover:text-zinc-50">
-              Sign out
-            </button>
-          </form>
-        )}
-      </div>
+      <AdminHeader admin={admin} current="queue" />
       <header>
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">Vetting queue</h1>
         <p className="mt-1 text-sm text-zinc-400">
