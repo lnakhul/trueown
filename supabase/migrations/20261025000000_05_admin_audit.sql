@@ -10,6 +10,10 @@
 --     that fits the tier; the submission's evidence URL becomes the brand's
 --     public audit URL (no ownership claim goes live without provenance).
 --   * admin_audit_log is readable by admins only; nobody can write it directly.
+--
+-- Safe to re-run. The SECURITY DEFINER routines pin search_path to
+-- public + extensions: on Supabase, PostGIS (geometry, ST_*) lives in the
+-- `extensions` schema; on plain Postgres that schema is absent and ignored.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -39,7 +43,7 @@ GRANT EXECUTE ON FUNCTION public.current_actor_id() TO anon, authenticated;
 -- -----------------------------------------------------------------------------
 -- admin_audit_log: append-only record of every vetting decision
 -- -----------------------------------------------------------------------------
-CREATE TABLE admin_audit_log (
+CREATE TABLE IF NOT EXISTS admin_audit_log (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   actor_id      UUID NOT NULL,
   actor_email   TEXT CHECK (actor_email IS NULL OR length(actor_email) <= 320),
@@ -49,14 +53,15 @@ CREATE TABLE admin_audit_log (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX admin_audit_log_created_at_idx ON admin_audit_log (created_at DESC);
-CREATE INDEX admin_audit_log_submission_idx ON admin_audit_log (submission_id);
+CREATE INDEX IF NOT EXISTS admin_audit_log_created_at_idx ON admin_audit_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS admin_audit_log_submission_idx ON admin_audit_log (submission_id);
 
 ALTER TABLE admin_audit_log ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON admin_audit_log FROM PUBLIC;
 REVOKE ALL ON admin_audit_log FROM anon, authenticated;
 GRANT SELECT ON admin_audit_log TO authenticated;
 
+DROP POLICY IF EXISTS admin_audit_log_select_admin ON admin_audit_log;
 CREATE POLICY admin_audit_log_select_admin ON admin_audit_log
   FOR SELECT TO authenticated USING (public.is_admin());
 
@@ -71,7 +76,7 @@ REVOKE UPDATE ON public.submissions FROM anon, authenticated;
 -- -----------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS approve_submission(UUID, INT, TEXT, industry_vertical, TEXT, DOUBLE PRECISION, DOUBLE PRECISION, TEXT);
 
-CREATE FUNCTION approve_submission(
+CREATE OR REPLACE FUNCTION approve_submission(
   p_submission_id              UUID,
   p_corporate_tier             INT,
   p_parent_entity              TEXT,
@@ -83,7 +88,7 @@ CREATE FUNCTION approve_submission(
 ) RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_actor_id     UUID := public.current_actor_id();
@@ -204,13 +209,13 @@ $$;
 -- -----------------------------------------------------------------------------
 -- reject_submission
 -- -----------------------------------------------------------------------------
-CREATE FUNCTION reject_submission(
+CREATE OR REPLACE FUNCTION reject_submission(
   p_submission_id UUID,
   p_review_note   TEXT DEFAULT NULL
 ) RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_actor_id UUID := public.current_actor_id();

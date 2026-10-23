@@ -4,6 +4,9 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Fixed
+- Migration `20261025000000_05_admin_audit.sql` failed on Supabase with `type "geometry" does not exist`: the SECURITY DEFINER vetting routines pinned `search_path` to `public` while Supabase installs PostGIS in `extensions`. They now pin `public, extensions, pg_temp`, and the migration is safe to re-run. CI also applies every migration to a Supabase-layout database.
+
 ### Added
 - Admin console hardening (migration `20261025000000_05_admin_audit.sql`): `approve_submission` / `reject_submission` check `is_admin()` against the request's JWT claims, record `reviewed_by` (and an optional `review_note`), and append to the new admin-only `admin_audit_log` in the same transaction. Direct `UPDATE` on `submissions` is revoked for every API role.
 - Approval now requires an `ownership_source_type` that fits the tier; the submission's evidence URL and today's date become the brand's provenance.
