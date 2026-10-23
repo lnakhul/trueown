@@ -7,6 +7,8 @@ next-env.d.ts
 
 # Unsourced research drafts: never publish claims without citations
 data/**/*_draft.csv
+# Geocoder output of a draft (e.g. candidates_draft.geocoded.csv) carries the same unverified claims.
+data/**/*_draft.geocoded.csv
 data/private/
 data/**/vetted_*.csv
 # Boundary files downloaded for markets without a committed copy (see data/markets/*/market.json).
