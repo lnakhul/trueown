@@ -1,3 +1,4 @@
+import { source_types_for_tier, type OwnershipSourceType } from "@/lib/provenance";
 import type { IndustryVertical } from "@/lib/types";
 
 /** Admin-supplied facts required to promote a submission into live tables. */
@@ -6,9 +7,10 @@ export interface ApprovalInput {
   parent_entity: string | null;
   industry_vertical: IndustryVertical;
   unique_selling_proposition: string | null;
+  /** Where the tier was verified; the submission's evidence URL becomes the audit link. */
+  ownership_source_type: OwnershipSourceType;
   latitude: number;
   longitude: number;
-  city: string;
 }
 
 export type ApprovalValidation =
@@ -83,7 +85,16 @@ export function validate_approval_input(raw_body: unknown): ApprovalValidation {
     return { valid: false, reason: "latitude and longitude must be valid coordinates." };
   }
 
-  const city = optional_text(fields.city, 100) ?? "New York";
+  const allowed_source_types = source_types_for_tier(corporate_tier);
+  if (
+    typeof fields.ownership_source_type !== "string" ||
+    !(allowed_source_types as readonly string[]).includes(fields.ownership_source_type)
+  ) {
+    return {
+      valid: false,
+      reason: `ownership_source_type for Tier ${corporate_tier} must be one of: ${allowed_source_types.join(", ")}.`,
+    };
+  }
 
   return {
     valid: true,
@@ -92,9 +103,24 @@ export function validate_approval_input(raw_body: unknown): ApprovalValidation {
       parent_entity,
       industry_vertical: fields.industry_vertical as IndustryVertical,
       unique_selling_proposition,
+      ownership_source_type: fields.ownership_source_type as OwnershipSourceType,
       latitude,
       longitude,
-      city,
     },
   };
+}
+
+export const MAX_REVIEW_NOTE_LENGTH = 500;
+
+export type ReviewNoteValidation = { valid: true; review_note: string | null } | { valid: false; reason: string };
+
+/** Optional note recorded with a rejection (empty body or blank note = none). */
+export function validate_review_note(raw_body: unknown): ReviewNoteValidation {
+  if (raw_body === undefined || raw_body === null) return { valid: true, review_note: null };
+  if (typeof raw_body !== "object") return { valid: false, reason: "Request body must be a JSON object." };
+  const review_note = optional_text((raw_body as Record<string, unknown>).review_note, MAX_REVIEW_NOTE_LENGTH);
+  if (review_note === undefined) {
+    return { valid: false, reason: `review_note must be text of at most ${MAX_REVIEW_NOTE_LENGTH} characters.` };
+  }
+  return { valid: true, review_note };
 }

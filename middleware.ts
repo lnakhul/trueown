@@ -1,25 +1,18 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
+import { basic_admin_allowed, check_basic_credentials } from "@/lib/auth/basic";
 import { get_supabase_config, is_admin_user } from "@/lib/supabase/config";
 
 /**
  * Fail-closed admin gate for the admin UI and admin API.
  * - Supabase configured: requires a verified Supabase Auth user whose
  *   app_metadata.role is 'admin' (the same rule as the is_admin() RLS function).
- * - Otherwise (local Docker dev): HTTP Basic auth via ADMIN_PASSWORD; if that is
- *   unset too, every admin request is rejected.
+ * - Otherwise, outside production only (local Docker dev): HTTP Basic auth via
+ *   ADMIN_PASSWORD. In production without Supabase, or with no password set,
+ *   every admin request is rejected.
+ * Admin route handlers verify again (lib/auth/admin-session.ts); this is the outer gate.
  */
 export const config = { matcher: ["/admin/:path*", "/api/admin/:path*"] };
-
-/** Length-independent comparison to avoid leaking the password via timing. */
-function constant_time_equals(provided: string, expected: string): boolean {
-  let difference = provided.length ^ expected.length;
-  const compare_length = Math.max(provided.length, expected.length);
-  for (let index = 0; index < compare_length; index += 1) {
-    difference |= (provided.charCodeAt(index) || 0) ^ (expected.charCodeAt(index) || 0);
-  }
-  return difference === 0;
-}
 
 function challenge(status: number, message: string): NextResponse {
   return new NextResponse(message, {
@@ -80,28 +73,13 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   if (get_supabase_config()) return supabase_gate(request);
 
   const admin_password = process.env.ADMIN_PASSWORD;
-  if (!admin_password) {
+  if (!basic_admin_allowed(process.env.NODE_ENV) || !admin_password) {
     return new NextResponse("Admin access is not configured.", { status: 503 });
   }
 
-  const authorization = request.headers.get("authorization");
-  if (!authorization?.startsWith("Basic ")) {
-    return challenge(401, "Authentication required.");
-  }
-
-  let decoded_credentials: string;
-  try {
-    decoded_credentials = atob(authorization.slice("Basic ".length));
-  } catch {
-    return challenge(401, "Malformed credentials.");
-  }
-
-  const separator_index = decoded_credentials.indexOf(":");
-  const provided_password =
-    separator_index === -1 ? "" : decoded_credentials.slice(separator_index + 1);
-
-  if (!constant_time_equals(provided_password, admin_password)) {
-    return challenge(401, "Invalid credentials.");
-  }
+  const credential_check = check_basic_credentials(request.headers.get("authorization"), admin_password);
+  if (credential_check === "missing") return challenge(401, "Authentication required.");
+  if (credential_check === "malformed") return challenge(401, "Malformed credentials.");
+  if (credential_check === "invalid") return challenge(401, "Invalid credentials.");
   return NextResponse.next();
 }
