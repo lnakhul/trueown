@@ -1,8 +1,16 @@
 import { Pool } from "pg";
 import { ensure_boundaries_loaded } from "@/lib/import/nta-file";
-import { import_venues, parse_venue_csv, VENUE_CSV_COLUMNS } from "@/lib/import/venues";
+import {
+  CORPORATE_SOURCE_TYPES,
+  INDEPENDENT_SOURCE_TYPES,
+  VENUE_CSV_COLUMNS,
+  VENUE_TEMPLATE_COLUMNS,
+  import_venues,
+  parse_venue_csv,
+} from "@/lib/import/venues";
 
-const HEADER = VENUE_CSV_COLUMNS.join(",");
+/** Legacy header: the required columns with the old `city` column before latitude. */
+const HEADER = [...VENUE_CSV_COLUMNS.slice(0, 10), "city", ...VENUE_CSV_COLUMNS.slice(10)].join(",");
 const TODAY = new Date("2026-11-01T00:00:00Z");
 
 const TIER3 =
@@ -138,5 +146,142 @@ describe("venue import (database)", () => {
       'ZZ Test Remote,restaurant,3,,Far away,community_consensus,https://example.com/remote,2026-10-01,"1 Remote Rd, Nowhere",,Nowhere,-33.8688,151.2093';
     const summary = await import_venues(pool, parse(remote).rows);
     expect(summary.errors.some((error) => error.includes("50 miles of any market"))).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/* Multi-market files                                                         */
+/* ------------------------------------------------------------------------- */
+
+const TEMPLATE_HEADER = VENUE_TEMPLATE_COLUMNS.join(",");
+const SOURCE = "2026-10-01";
+/** Builds a template-format row (market column instead of city). */
+function market_row(
+  name: string,
+  tier: 1 | 2 | 3,
+  market: string,
+  address: string,
+  latitude: number,
+  longitude: number,
+): string {
+  const parent = tier === 3 ? "" : "ZZ Capital";
+  const source = tier === 3 ? "state_business_registry" : "crunchbase";
+  return `${name},coffee_bakery,${tier},${parent},,${source},https://example.com/${encodeURIComponent(name)},${SOURCE},"${address}",,${market},${latitude},${longitude}`;
+}
+const parse_template = (...lines: string[]) => parse_venue_csv([TEMPLATE_HEADER, ...lines].join("\n"), TODAY);
+
+const NYC_POINT = [40.7324, -74.0021] as const;
+const AUSTIN_POINT = [30.2672, -97.7431] as const;
+const CHICAGO_POINT = [41.8781, -87.6298] as const;
+
+describe("multi-market CSV validation", () => {
+  test("the template header (market, no city) is accepted and generic source types are valid", () => {
+    const result = parse_template(market_row("ZZ Test Sunrise Bakery", 3, "austin", "1 Congress Ave, Austin, TX", ...AUSTIN_POINT));
+    expect(result.errors).toEqual([]);
+    expect(result.rows[0]).toMatchObject({ market_slug: "austin", declared_city: null, ownership_source_type: "state_business_registry" });
+  });
+
+  test("a malformed market slug is rejected", () => {
+    const result = parse_template(market_row("ZZ Test Bad", 3, "Austin TX", "1 Congress Ave", ...AUSTIN_POINT));
+    expect(result.errors.some((error) => error.includes("market must be a market slug"))).toBe(true);
+  });
+
+  test("same-named independents in different markets are not treated as one brand", () => {
+    const nyc = market_row("ZZ Test Sunrise Bakery", 3, "nyc", "10 Test St, New York, NY", ...NYC_POINT).replace(",,state", ",Bagels,state");
+    const austin = market_row("ZZ Test Sunrise Bakery", 3, "austin", "1 Congress Ave, Austin, TX", ...AUSTIN_POINT);
+    expect(parse_template(nyc, austin).errors).toEqual([]);
+  });
+
+  test("a national brand must agree with itself across markets", () => {
+    const nyc = market_row("ZZ Test National Coffee", 2, "nyc", "11 Test St, New York, NY", ...NYC_POINT);
+    const chicago = market_row("ZZ Test National Coffee", 2, "chicago", "1 State St, Chicago, IL", ...CHICAGO_POINT).replace("ZZ Capital", "Other Capital");
+    expect(parse_template(nyc, chicago).errors.some((error) => error.includes("parent_entity"))).toBe(true);
+  });
+});
+
+describe("multi-market import (database)", () => {
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: database_url, max: 2 });
+    await ensure_boundaries_loaded(pool);
+    await cleanup();
+  });
+  afterEach(cleanup);
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  test("NYC + Austin + Chicago in one file: independents split by market, national brands stay one brand", async () => {
+    const parsed = parse_template(
+      market_row("ZZ Test Sunrise Bakery", 3, "nyc", "10 Test St, New York, NY", ...NYC_POINT),
+      market_row("ZZ Test Sunrise Bakery", 3, "austin", "1 Congress Ave, Austin, TX", ...AUSTIN_POINT),
+      market_row("ZZ Test National Coffee", 2, "nyc", "11 Test St, New York, NY", 40.733, -74.003),
+      market_row("ZZ Test National Coffee", 2, "chicago", "1 State St, Chicago, IL", ...CHICAGO_POINT),
+    );
+    expect(parsed.errors).toEqual([]);
+    const summary = await import_venues(pool, parsed.rows);
+    expect(summary.errors).toEqual([]);
+    expect(summary.brands_created).toBe(3);
+    expect(summary.locations_created).toBe(4);
+
+    const brands = await pool.query<{ name: string; corporate_tier: number; slug: string | null; storefront_cities: string[] }>(
+      `SELECT b.name, b.corporate_tier, m.slug,
+              array_agg(l.city ORDER BY l.city) AS storefront_cities
+         FROM brands b
+         LEFT JOIN markets m ON m.id = b.home_market_id
+         JOIN locations l ON l.brand_id = b.id
+        WHERE b.name LIKE 'ZZ Test%'
+        GROUP BY b.id, b.name, b.corporate_tier, m.slug
+        ORDER BY b.name, m.slug`,
+    );
+    expect(brands.rows).toEqual([
+      { name: "ZZ Test National Coffee", corporate_tier: 2, slug: null, storefront_cities: ["Chicago", "New York"] },
+      { name: "ZZ Test Sunrise Bakery", corporate_tier: 3, slug: "austin", storefront_cities: ["Austin"] },
+      { name: "ZZ Test Sunrise Bakery", corporate_tier: 3, slug: "nyc", storefront_cities: ["New York"] },
+    ]);
+  });
+
+  test("a market column that disagrees with the coordinates is rejected", async () => {
+    const parsed = parse_template(market_row("ZZ Test Misplaced", 3, "chicago", "1 Congress Ave, Austin, TX", ...AUSTIN_POINT));
+    const summary = await import_venues(pool, parsed.rows);
+    expect(summary.errors.some((error) => error.includes('market is "chicago"') && error.includes("Austin"))).toBe(true);
+  });
+
+  test("a legacy city column must match the market's label; the stored city always comes from the market", async () => {
+    const wrong_label = parse(TIER3.replace(",New York,40.7324", ",New York City,40.7324"));
+    const blocked = await import_venues(pool, wrong_label.rows);
+    expect(blocked.errors.some((error) => error.includes('city "New York City"'))).toBe(true);
+
+    const blank_city = parse(TIER3.replace(",New York,40.7324", ",,40.7324"));
+    expect((await import_venues(pool, blank_city.rows)).errors).toEqual([]);
+    const stored = await pool.query("SELECT l.city FROM locations l JOIN brands b ON b.id = l.brand_id WHERE b.name = 'ZZ Test Roasters'");
+    expect(stored.rows[0].city).toBe("New York");
+  });
+
+  test("an independent cannot reuse the name of a national Tier 1/2 brand in the same vertical", async () => {
+    const national = parse_template(market_row("ZZ Test Shared Name", 2, "chicago", "1 State St, Chicago, IL", ...CHICAGO_POINT));
+    expect((await import_venues(pool, national.rows)).errors).toEqual([]);
+    const local = parse_template(market_row("ZZ Test Shared Name", 3, "austin", "1 Congress Ave, Austin, TX", ...AUSTIN_POINT));
+    const blocked = await import_venues(pool, local.rows);
+    expect(blocked.errors.some((error) => error.includes("different corporate tier"))).toBe(true);
+  });
+
+  test("the database refuses an independent storefront outside its home market", async () => {
+    const parsed = parse_template(market_row("ZZ Test Local Only", 3, "nyc", "12 Test St, New York, NY", ...NYC_POINT));
+    expect((await import_venues(pool, parsed.rows)).errors).toEqual([]);
+    await expect(
+      pool.query(
+        `INSERT INTO locations (brand_id, address, coordinates)
+         SELECT id, '2 Congress Ave', ST_SetSRID(ST_MakePoint($1, $2), 4326) FROM brands WHERE name = 'ZZ Test Local Only'`,
+        [AUSTIN_POINT[1], AUSTIN_POINT[0]],
+      ),
+    ).rejects.toThrow(/independent_market_mismatch/);
+  });
+
+  test("source types in code match the database constraint exactly", async () => {
+    const result = await pool.query<{ definition: string }>(
+      "SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conname = 'brands_ownership_source_type_check'",
+    );
+    const in_database = [...(result.rows[0]?.definition ?? "").matchAll(/'([a-z_]+)'/g)].map((match) => match[1]).sort();
+    expect(in_database).toEqual([...CORPORATE_SOURCE_TYPES, ...INDEPENDENT_SOURCE_TYPES].sort());
   });
 });

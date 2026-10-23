@@ -1,0 +1,17 @@
+{
+  "slug": "chicago",
+  "city_name": "Chicago",
+  "city_label": "Chicago",
+  "status": "coming_soon",
+  "center": { "latitude": 41.8781, "longitude": -87.6298 },
+  "boundaries": {
+    "source_id": "chicago_community_areas",
+    "dataset": "Boundaries - Community Areas",
+    "publisher": "City of Chicago via data.cityofchicago.org",
+    "download_url": "https://data.cityofchicago.org/resource/igwz-8jzy.geojson?$limit=1000",
+    "committed_file": null,
+    "properties": { "code": "area_numbe", "name": "community", "borough": null, "area_type": null },
+    "name_case": "title",
+    "min_expected_features": 77
+  }
+}

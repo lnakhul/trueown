@@ -9,3 +9,6 @@ next-env.d.ts
 data/**/*_draft.csv
 data/private/
 data/**/vetted_*.csv
+# Boundary files downloaded for markets without a committed copy (see data/markets/*/market.json).
+data/markets/*/boundaries.geojson
+data/markets/*/boundaries.provenance.json

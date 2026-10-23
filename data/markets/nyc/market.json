@@ -1,0 +1,17 @@
+{
+  "slug": "nyc",
+  "city_name": "New York City",
+  "city_label": "New York",
+  "status": "active",
+  "center": { "latitude": 40.758, "longitude": -73.9855 },
+  "boundaries": {
+    "source_id": "nyc_nta_2020",
+    "dataset": "2020 Neighborhood Tabulation Areas (NTAs)",
+    "publisher": "Department of City Planning (DCP) via NYC Open Data",
+    "download_url": "https://data.cityofnewyork.us/resource/9nt8-h7nd.geojson?$limit=500",
+    "committed_file": "data/nyc/nta_2020.geojson",
+    "properties": { "code": "nta2020", "name": "ntaname", "borough": "boroname", "area_type": "ntatype" },
+    "name_case": "as_is",
+    "min_expected_features": 250
+  }
+}

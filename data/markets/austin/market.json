@@ -1,0 +1,17 @@
+{
+  "slug": "austin",
+  "city_name": "Austin",
+  "city_label": "Austin",
+  "status": "coming_soon",
+  "center": { "latitude": 30.2672, "longitude": -97.7431 },
+  "boundaries": {
+    "source_id": "austin_neighborhoods",
+    "dataset": "Neighborhoods",
+    "publisher": "City of Austin, Texas via data.austintexas.gov",
+    "download_url": "https://data.austintexas.gov/resource/a7ap-j2yt.geojson?$limit=1000",
+    "committed_file": null,
+    "properties": { "code": "fid", "name": "neighname", "borough": null, "area_type": null },
+    "name_case": "as_is",
+    "min_expected_features": 95
+  }
+}

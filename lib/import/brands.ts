@@ -12,6 +12,9 @@ export const BRAND_CSV_COLUMNS = [
   "industry_vertical",
 ] as const;
 
+/** Optional trailing column: home market slug for Tier 3 independents (blank = set by its first storefront). */
+export const OPTIONAL_BRAND_CSV_COLUMN = "market";
+
 export interface BrandRow {
   line: number;
   brand_name: string;
@@ -20,6 +23,8 @@ export interface BrandRow {
   financial_backers: string[];
   unique_selling_proposition: string | null;
   industry_vertical: IndustryVertical;
+  /** Home market slug (Tier 3 only; null = not declared). */
+  market_slug: string | null;
 }
 
 export interface BrandParseResult {
@@ -74,10 +79,14 @@ export function parse_brand_csv(text: string): BrandParseResult {
   }
 
   const [header, ...body] = records;
-  if (!header || header.record.join(",") !== BRAND_CSV_COLUMNS.join(",")) {
-    result.errors.push(`Header must be exactly: ${BRAND_CSV_COLUMNS.join(",")}`);
+  const base_header = BRAND_CSV_COLUMNS.join(",");
+  const header_text = header?.record.join(",");
+  const has_market_column = header_text === `${base_header},${OPTIONAL_BRAND_CSV_COLUMN}`;
+  if (!header || (header_text !== base_header && !has_market_column)) {
+    result.errors.push(`Header must be exactly: ${base_header} (optionally followed by ,${OPTIONAL_BRAND_CSV_COLUMN})`);
     return result;
   }
+  const expected_columns = BRAND_CSV_COLUMNS.length + (has_market_column ? 1 : 0);
   if (body.length === 0) result.errors.push("File has a header but no data rows.");
   if (body.length > MAX_BRAND_ROWS) result.errors.push(`Too many rows (max ${MAX_BRAND_ROWS}).`);
 
@@ -87,11 +96,12 @@ export function parse_brand_csv(text: string): BrandParseResult {
 
   for (const { record, info } of body) {
     const at = `Line ${info.lines}`;
-    if (record.length !== BRAND_CSV_COLUMNS.length) {
-      result.errors.push(`${at}: expected ${BRAND_CSV_COLUMNS.length} columns, found ${record.length}.`);
+    if (record.length !== expected_columns) {
+      result.errors.push(`${at}: expected ${expected_columns} columns, found ${record.length}.`);
       continue;
     }
-    const [name, tier_text, parent, backers_text, usp, vertical] = record.map(clean);
+    const [name, tier_text, parent, backers_text, usp, vertical, market_text] = record.map(clean);
+    const market_slug = (market_text ?? "").toLowerCase();
     const tier = Number(tier_text);
     const problems: string[] = [];
 
@@ -107,8 +117,10 @@ export function parse_brand_csv(text: string): BrandParseResult {
       problems.push(`a financial_backers entry is over ${MAX_BACKER_LENGTH} characters`);
     }
     if ((tier === 1 || tier === 2) && !parent) problems.push("parent_entity is required for Tier 1 and 2");
+    if (market_slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(market_slug)) problems.push("market must be a market slug such as nyc");
+    if (market_slug && tier !== 3) problems.push("market is only set for Tier 3 independents (Tier 1/2 brands are national)");
 
-    const key = `${(name ?? "").toLowerCase()}|${vertical}`;
+    const key = `${(name ?? "").toLowerCase()}|${vertical}|${tier === 3 ? market_slug : "*"}`;
     if (seen.has(key)) problems.push(`duplicate brand "${name}"`);
     seen.add(key);
 
@@ -129,6 +141,7 @@ export function parse_brand_csv(text: string): BrandParseResult {
       financial_backers: tier === 3 ? [] : backers,
       unique_selling_proposition: usp || null,
       industry_vertical: vertical as IndustryVertical,
+      market_slug: market_slug || null,
     });
   }
 
@@ -154,10 +167,32 @@ export async function import_brands(
   try {
     await client.query("BEGIN");
     for (const row of rows) {
+      let home_market_id: string | null = null;
+      if (row.market_slug) {
+        const market = await client.query<{ id: string }>("SELECT id FROM markets WHERE slug = $1", [row.market_slug]);
+        home_market_id = market.rows[0]?.id ?? null;
+        if (!home_market_id) throw new Error(`Line ${row.line}: unknown market "${row.market_slug}".`);
+      }
+      // Same rule as the venue importer: a same-named brand with another tier in the
+      // same scope (national, or this market for independents) is never overwritten.
+      const conflict = await client.query(
+        `SELECT 1 FROM brands
+          WHERE lower(btrim(name)) = lower(btrim($1))
+            AND industry_vertical = $2::industry_vertical
+            AND corporate_tier <> $3
+            AND ($3 <> 3 OR home_market_id IS NULL OR $4::uuid IS NULL OR home_market_id = $4::uuid)
+          LIMIT 1`,
+        [row.brand_name, row.industry_vertical, row.corporate_tier, home_market_id],
+      );
+      if (conflict.rowCount && conflict.rowCount > 0) {
+        throw new Error(`Line ${row.line}: "${row.brand_name}" already exists with a different tier; resolve it by hand.`);
+      }
       const result = await client.query<{ inserted: boolean }>(
-        `INSERT INTO brands (name, corporate_tier, industry_vertical, parent_entity, financial_backers, unique_selling_proposition)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (lower(btrim(name)), industry_vertical) DO UPDATE
+        `INSERT INTO brands (name, corporate_tier, industry_vertical, parent_entity, financial_backers,
+                             unique_selling_proposition, home_market_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (lower(btrim(name)), industry_vertical,
+                      COALESCE(home_market_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO UPDATE
            SET parent_entity = EXCLUDED.parent_entity,
                financial_backers = EXCLUDED.financial_backers,
                unique_selling_proposition = EXCLUDED.unique_selling_proposition
@@ -170,6 +205,7 @@ export async function import_brands(
           row.parent_entity,
           row.financial_backers,
           row.unique_selling_proposition,
+          home_market_id,
         ],
       );
       const outcome = result.rows[0];
