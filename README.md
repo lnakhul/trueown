@@ -23,6 +23,7 @@ The schema is built to extend beyond coffee into restaurants, bars and retail, a
 - Crowdsourced tip form with required evidence URL, Cloudflare Turnstile, honeypot and rate limiting
 - Admin vetting queue (Supabase Auth) to approve or reject tips
 - Admin brand review to re-verify stale claims and correct ownership changes, all audited
+- Public "How we classify" page and a "Report an error" flow for business owners, with an admin inbox
 - Row-level security on every table; provenance fields on brand ownership claims
 - Bulk CSV importers for brands, venues and neighborhood boundaries
 
@@ -79,6 +80,7 @@ All importers support `--dry-run` (validate and roll back) and require `--yes` f
 npm run db:import:markets                          # markets from data/markets/*/market.json
 npm run db:import:boundaries                       # NYC NTA 2020 polygons (--market <slug> --download for other cities)
 npm run db:import:brands -- <brands.csv>           # brand-level rows
+npm run db:geocode:venues -- <venues.csv>          # fill blank coordinates from addresses (review the output)
 npm run db:import:venues -- <venues.csv>           # brands + storefronts with provenance
 ```
 

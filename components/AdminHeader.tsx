@@ -4,6 +4,7 @@ import type { AdminIdentity } from "@/lib/auth/admin-session";
 const ADMIN_SECTIONS = [
   { id: "queue", href: "/admin", label: "Vetting queue" },
   { id: "brands", href: "/admin/brands", label: "Brands" },
+  { id: "corrections", href: "/admin/corrections", label: "Error reports" },
 ] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]["id"];
