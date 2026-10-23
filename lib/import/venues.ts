@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { INDUSTRY_VERTICALS, type IndustryVertical } from "@/lib/types";
 import { validate_evidence_url } from "@/lib/validation";
 
-/** Exact header the importer accepts; mirrored by data/templates/venues_template.csv. */
+/** Columns every venues CSV must have; data/templates/venues_template.csv adds `market`. */
 export const VENUE_CSV_COLUMNS = [
   "brand_name",
   "industry_vertical",
@@ -15,12 +15,25 @@ export const VENUE_CSV_COLUMNS = [
   "ownership_verified_on",
   "address",
   "neighborhood",
-  "city",
   "latitude",
   "longitude",
 ] as const;
 
-export type VenueCsvColumn = (typeof VENUE_CSV_COLUMNS)[number];
+/**
+ * Optional columns. `market` (a slug such as nyc, austin) is cross-checked against
+ * the market the coordinates fall in. `city` is legacy: if filled it must equal the
+ * market's canonical city label, because the stored city always comes from the market.
+ */
+export const OPTIONAL_VENUE_CSV_COLUMNS = ["market", "city"] as const;
+
+/** Header of the current template (required columns plus `market`). */
+export const VENUE_TEMPLATE_COLUMNS = [
+  ...VENUE_CSV_COLUMNS.slice(0, 10),
+  "market",
+  ...VENUE_CSV_COLUMNS.slice(10),
+] as const;
+
+export type VenueCsvColumn = (typeof VENUE_CSV_COLUMNS)[number] | (typeof OPTIONAL_VENUE_CSV_COLUMNS)[number];
 
 export { INDUSTRY_VERTICALS };
 
@@ -38,12 +51,15 @@ export const CORPORATE_SOURCE_TYPES = [
   "reputable_news",
 ] as const;
 export const INDEPENDENT_SOURCE_TYPES = [
+  "state_business_registry",
+  "local_press",
+  "community_consensus",
+  // Legacy NYC-specific values, still accepted.
   "nys_dos_corporations",
   "eater_ny",
-  "community_consensus",
 ] as const;
 
-export const DEFAULT_CITY = "New York";
+const MARKET_SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const MAX_CSV_ROWS = 5000;
 export const MAX_CSV_BYTES = 2 * 1024 * 1024;
 
@@ -59,7 +75,10 @@ export interface VenueRow {
   ownership_verified_on: string;
   address: string;
   neighborhood: string | null;
-  city: string;
+  /** Declared market slug (null = take it from the coordinates). */
+  market_slug: string | null;
+  /** Legacy declared city label (null = not given). */
+  declared_city: string | null;
   latitude: number;
   longitude: number;
 }
@@ -86,8 +105,13 @@ function is_real_past_date(value: string, today: Date): boolean {
   return is_real && year >= 2000 && parsed.getTime() <= today.getTime();
 }
 
-function brand_key(row: Pick<VenueRow, "brand_name" | "industry_vertical">): string {
-  return `${row.brand_name.toLowerCase()}|${row.industry_vertical}`;
+/**
+ * Rows that describe the same brand within one file. Tier 1/2 brands are national;
+ * Tier 3 independents are local, so the declared market (or city) is part of the key.
+ */
+function file_brand_key(row: Pick<VenueRow, "brand_name" | "industry_vertical" | "corporate_tier" | "market_slug" | "declared_city">): string {
+  const scope = row.corporate_tier === 3 ? (row.market_slug ?? row.declared_city?.toLowerCase() ?? "") : "*";
+  return `${row.brand_name.toLowerCase()}|${row.industry_vertical}|${scope}`;
 }
 
 /**
@@ -124,8 +148,9 @@ export function parse_venue_csv(text: string, today: Date = new Date()): VenuePa
   VENUE_CSV_COLUMNS.forEach((column) => {
     if (!header.includes(column)) header_problems.push(`missing column "${column}"`);
   });
+  const known_columns: readonly string[] = [...VENUE_CSV_COLUMNS, ...OPTIONAL_VENUE_CSV_COLUMNS];
   header.forEach((column) => {
-    if (!(VENUE_CSV_COLUMNS as readonly string[]).includes(column)) {
+    if (!known_columns.includes(column)) {
       header_problems.push(`unknown column "${column}"`);
     }
   });
@@ -144,7 +169,10 @@ export function parse_venue_csv(text: string, today: Date = new Date()): VenuePa
 
   data_records.forEach(({ record, info }) => {
     const line = info.lines;
-    const cell = (column: VenueCsvColumn): string => collapse_whitespace(record[header.indexOf(column)] ?? "");
+    const cell = (column: VenueCsvColumn): string => {
+      const index = header.indexOf(column);
+      return index === -1 ? "" : collapse_whitespace(record[index] ?? "");
+    };
     const row_errors: string[] = [];
     const fail = (message: string): void => {
       row_errors.push(`Line ${line}: ${message}`);
@@ -201,8 +229,13 @@ export function parse_venue_csv(text: string, today: Date = new Date()): VenuePa
     const neighborhood = cell("neighborhood");
     if (neighborhood.length > 100) fail("neighborhood is longer than 100 characters.");
 
-    const city = cell("city") || DEFAULT_CITY;
-    if (city.length > 100) fail("city is longer than 100 characters.");
+    const market_slug = cell("market").toLowerCase();
+    if (market_slug && (!MARKET_SLUG_PATTERN.test(market_slug) || market_slug.length > 40)) {
+      fail("market must be a market slug such as nyc, austin or chicago.");
+    }
+
+    const declared_city = cell("city");
+    if (declared_city.length > 100) fail("city is longer than 100 characters.");
 
     const latitude_text = cell("latitude");
     const longitude_text = cell("longitude");
@@ -233,13 +266,14 @@ export function parse_venue_csv(text: string, today: Date = new Date()): VenuePa
       ownership_verified_on: verified_on,
       address,
       neighborhood: neighborhood || null,
-      city,
+      market_slug: market_slug || null,
+      declared_city: declared_city || null,
       latitude,
       longitude,
     };
 
     // Every row of a brand must agree, otherwise the dataset contradicts itself.
-    const brand_id = brand_key(row);
+    const brand_id = file_brand_key(row);
     const first_for_brand = first_row_by_brand.get(brand_id);
     if (first_for_brand) {
       const compared: Array<keyof VenueRow> = [
@@ -286,22 +320,45 @@ export interface VenueImportSummary {
 
 type Queryable = Pick<PoolClient, "query">;
 
-async function has_boundaries(client: Queryable, city: string, cache: Map<string, boolean>): Promise<boolean> {
-  const cached = cache.get(city);
+interface ResolvedMarket {
+  id: string;
+  slug: string;
+  city_name: string;
+  city_label: string;
+  status: string;
+}
+
+async function has_boundaries(client: Queryable, market_id: string, cache: Map<string, boolean>): Promise<boolean> {
+  const cached = cache.get(market_id);
   if (cached !== undefined) return cached;
   const result = await client.query<{ present: boolean }>(
-    "SELECT EXISTS (SELECT 1 FROM neighborhood_boundaries WHERE city = $1) AS present",
-    [city],
+    "SELECT EXISTS (SELECT 1 FROM neighborhood_boundaries WHERE market_id = $1) AS present",
+    [market_id],
   );
   const present = result.rows[0]?.present === true;
-  cache.set(city, present);
+  cache.set(market_id, present);
   return present;
+}
+
+/** The market whose 50-mile radius covers the point (nearest center wins), or null. */
+async function resolve_market(client: Queryable, latitude: number, longitude: number): Promise<ResolvedMarket | null> {
+  const result = await client.query<ResolvedMarket>(
+    `SELECT id, slug, city_name, city_label, status
+       FROM markets
+      WHERE id = public.resolve_market_id(ST_SetSRID(ST_MakePoint($1, $2), 4326))`,
+    [longitude, latitude],
+  );
+  return result.rows[0] ?? null;
 }
 
 /**
  * Loads validated rows in a single transaction: all brands and storefronts are
  * written, or none are. dry_run runs every statement (so constraints and
  * coordinate checks are real) and then rolls back.
+ *
+ * Each row's market comes from its coordinates. Tier 1/2 brands are national (one
+ * brand across markets); Tier 3 independents belong to the market they trade in,
+ * so same-named independents in different cities stay separate brands.
  */
 export async function import_venues(
   pool: Pool,
@@ -325,15 +382,61 @@ export async function import_venues(
     const brand_ids = new Map<string, string | null>();
 
     for (const row of rows) {
-      const key = brand_key(row);
+      const market = await resolve_market(client, row.latitude, row.longitude);
+      if (!market) {
+        summary.errors.push(
+          `Line ${row.line}: (${row.latitude}, ${row.longitude}) is not within 50 miles of any market. Add the city to the markets table first.`,
+        );
+        continue;
+      }
+      if (row.market_slug && row.market_slug !== market.slug) {
+        summary.errors.push(
+          `Line ${row.line}: market is "${row.market_slug}" but the coordinates are in ${market.city_name} ("${market.slug}"). Check the coordinates or the market column.`,
+        );
+        continue;
+      }
+      if (row.declared_city && row.declared_city.toLowerCase() !== market.city_label.toLowerCase()) {
+        summary.errors.push(
+          `Line ${row.line}: city "${row.declared_city}" does not match ${market.city_name}, whose city label is "${market.city_label}". Leave city blank or use the market column.`,
+        );
+        continue;
+      }
+      if (market.status !== "active" && !market_warnings.has(market.slug)) {
+        market_warnings.add(market.slug);
+        summary.warnings.push(
+          `Market "${market.city_name}" is '${market.status}': rows are stored but not served until it is set to 'active'.`,
+        );
+      }
+
+      const home_market_id = row.corporate_tier === 3 ? market.id : null;
+      const key = `${row.brand_name.toLowerCase()}|${row.industry_vertical}|${home_market_id ?? "*"}`;
       if (!brand_ids.has(key)) {
-        // The WHERE clause refuses to rewrite a live brand whose tier differs.
+        // A same-named brand with another tier in the same scope (national, or this
+        // market for independents) would be a silent tier change: stop instead.
+        const conflict = await client.query(
+          `SELECT 1 FROM brands
+            WHERE lower(btrim(name)) = lower(btrim($1))
+              AND industry_vertical = $2::industry_vertical
+              AND corporate_tier <> $3
+              AND ($3 <> 3 OR home_market_id IS NULL OR home_market_id = $4::uuid)
+            LIMIT 1`,
+          [row.brand_name, row.industry_vertical, row.corporate_tier, home_market_id],
+        );
+        if (conflict.rowCount && conflict.rowCount > 0) {
+          summary.errors.push(
+            `Line ${row.line}: "${row.brand_name}" already exists with a different corporate tier; resolve it manually before importing.`,
+          );
+          brand_ids.set(key, null);
+          continue;
+        }
+
         const brand_result = await client.query<{ id: string; inserted: boolean }>(
           `INSERT INTO brands (name, corporate_tier, industry_vertical, parent_entity,
                                unique_selling_proposition, ownership_source_type,
-                               ownership_source_url, ownership_verified_on)
-           VALUES ($1, $2, $3::industry_vertical, $4, $5, $6, $7, $8)
-           ON CONFLICT (lower(btrim(name)), industry_vertical) DO UPDATE
+                               ownership_source_url, ownership_verified_on, home_market_id)
+           VALUES ($1, $2, $3::industry_vertical, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (lower(btrim(name)), industry_vertical,
+                        COALESCE(home_market_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO UPDATE
              SET parent_entity = EXCLUDED.parent_entity,
                  unique_selling_proposition =
                    COALESCE(EXCLUDED.unique_selling_proposition, brands.unique_selling_proposition),
@@ -351,6 +454,7 @@ export async function import_venues(
             row.ownership_source_type,
             row.ownership_source_url,
             row.ownership_verified_on,
+            home_market_id,
           ],
         );
         const brand_row = brand_result.rows[0];
@@ -370,15 +474,15 @@ export async function import_venues(
       if (!brand_id) continue;
 
       let neighborhood = row.neighborhood;
-      if (await has_boundaries(client, row.city, boundary_cache)) {
+      if (await has_boundaries(client, market.id, boundary_cache)) {
         const resolved = await client.query<{ name: string; distance_meters: number }>(
-          "SELECT name, distance_meters FROM resolve_neighborhood($1, $2, $3)",
-          [row.longitude, row.latitude, row.city],
+          "SELECT name, distance_meters FROM resolve_neighborhood_in_market($1, $2, $3)",
+          [row.longitude, row.latitude, market.id],
         );
         const match = resolved.rows[0];
         if (!match) {
           summary.errors.push(
-            `Line ${row.line}: (${row.latitude}, ${row.longitude}) is not inside any ${row.city} neighborhood boundary. Are latitude and longitude swapped?`,
+            `Line ${row.line}: (${row.latitude}, ${row.longitude}) is not inside any ${market.city_name} neighborhood boundary. Are latitude and longitude swapped?`,
           );
           continue;
         }
@@ -391,38 +495,16 @@ export async function import_venues(
         }
       } else {
         summary.warnings.push(
-          `Line ${row.line}: no neighborhood boundaries are loaded for "${row.city}", so coordinates were not sanity-checked.`,
+          `Line ${row.line}: no neighborhood boundaries are loaded for ${market.city_name}, so coordinates were not sanity-checked.`,
         );
       }
 
-      const market_result = await client.query<{ city_name: string; status: string }>(
-        `SELECT city_name, status FROM markets
-          WHERE ST_DWithin(geographic_center::geography,
-                           ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, 80467.2)
-          ORDER BY ST_Distance(geographic_center::geography,
-                               ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography)
-          LIMIT 1`,
-        [row.longitude, row.latitude],
-      );
-      const market = market_result.rows[0];
-      if (!market) {
-        summary.errors.push(
-          `Line ${row.line}: (${row.latitude}, ${row.longitude}) is not within 50 miles of any market. Add the city to the markets table first.`,
-        );
-        continue;
-      }
-      if (market.status !== "active" && !market_warnings.has(market.city_name)) {
-        market_warnings.add(market.city_name);
-        summary.warnings.push(
-          `Market "${market.city_name}" is '${market.status}': rows are stored but not served until it is set to 'active'.`,
-        );
-      }
-
+      // The database sets city and market_id from the coordinates.
       const location_result = await client.query(
-        `INSERT INTO locations (brand_id, address, neighborhood, city, coordinates)
-         VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($5, $6), 4326))
+        `INSERT INTO locations (brand_id, address, neighborhood, coordinates)
+         VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326))
          ON CONFLICT (brand_id, lower(btrim(address))) DO NOTHING`,
-        [brand_id, row.address, neighborhood, row.city, row.longitude, row.latitude],
+        [brand_id, row.address, neighborhood, row.longitude, row.latitude],
       );
       if (location_result.rowCount === 1) summary.locations_created += 1;
       else summary.locations_skipped += 1;

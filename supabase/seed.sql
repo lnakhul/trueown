@@ -12,15 +12,15 @@ INSERT INTO brands (id, name, corporate_tier, industry_vertical, parent_entity, 
 
 INSERT INTO locations (id, brand_id, address, neighborhood, city, coordinates) VALUES
 -- Blank Street
-(gen_random_uuid(), 'b1111111-1111-1111-1111-111111111111', '186 W 4th St, New York, NY 10014', 'West Village', 'New York City', ST_SetSRID(ST_MakePoint(-74.0021, 40.7324), 4326)),
-(gen_random_uuid(), 'b1111111-1111-1111-1111-111111111111', '980 Lexington Ave, New York, NY 10021', 'Upper East Side', 'New York City', ST_SetSRID(ST_MakePoint(-73.9612, 40.7698), 4326)),
+(gen_random_uuid(), 'b1111111-1111-1111-1111-111111111111', '186 W 4th St, New York, NY 10014', 'West Village', 'New York', ST_SetSRID(ST_MakePoint(-74.0021, 40.7324), 4326)),
+(gen_random_uuid(), 'b1111111-1111-1111-1111-111111111111', '980 Lexington Ave, New York, NY 10021', 'Upper East Side', 'New York', ST_SetSRID(ST_MakePoint(-73.9612, 40.7698), 4326)),
 -- Maman
-(gen_random_uuid(), 'b2222222-2222-2222-2222-222222222222', '239 Centre St, New York, NY 10013', 'SoHo', 'New York City', ST_SetSRID(ST_MakePoint(-73.9996, 40.7225), 4326)),
-(gen_random_uuid(), 'b2222222-2222-2222-2222-222222222222', '67 University Pl, New York, NY 10003', 'Greenwich Village', 'New York City', ST_SetSRID(ST_MakePoint(-73.9934, 40.7331), 4326)),
+(gen_random_uuid(), 'b2222222-2222-2222-2222-222222222222', '239 Centre St, New York, NY 10013', 'SoHo', 'New York', ST_SetSRID(ST_MakePoint(-73.9996, 40.7225), 4326)),
+(gen_random_uuid(), 'b2222222-2222-2222-2222-222222222222', '67 University Pl, New York, NY 10003', 'Greenwich Village', 'New York', ST_SetSRID(ST_MakePoint(-73.9934, 40.7331), 4326)),
 -- Magnolia Bakery
-(gen_random_uuid(), 'b3333333-3333-3333-3333-333333333333', '401 Bleecker St, New York, NY 10014', 'West Village', 'New York City', ST_SetSRID(ST_MakePoint(-74.0048, 40.7359), 4326)),
+(gen_random_uuid(), 'b3333333-3333-3333-3333-333333333333', '401 Bleecker St, New York, NY 10014', 'West Village', 'New York', ST_SetSRID(ST_MakePoint(-74.0048, 40.7359), 4326)),
 -- Independents
-(gen_random_uuid(), 'b4444444-4444-4444-4444-444444444444', '239 E 5th St, New York, NY 10003', 'East Village', 'New York City', ST_SetSRID(ST_MakePoint(-73.9897, 40.7271), 4326)),
-(gen_random_uuid(), 'b5555555-5555-5555-5555-555555555555', '56 7th Ave, New York, NY 10011', 'Chelsea', 'New York City', ST_SetSRID(ST_MakePoint(-74.0003, 40.7391), 4326)),
-(gen_random_uuid(), 'b6666666-6666-6666-6666-666666666666', '201 Bleecker St, New York, NY 10012', 'Greenwich Village', 'New York City', ST_SetSRID(ST_MakePoint(-74.0012, 40.7301), 4326)),
-(gen_random_uuid(), 'b7777777-7777-7777-7777-777777777777', '28-01 24th Ave, Astoria, NY 11102', 'Astoria', 'New York City', ST_SetSRID(ST_MakePoint(-73.9242, 40.7744), 4326));
+(gen_random_uuid(), 'b4444444-4444-4444-4444-444444444444', '239 E 5th St, New York, NY 10003', 'East Village', 'New York', ST_SetSRID(ST_MakePoint(-73.9897, 40.7271), 4326)),
+(gen_random_uuid(), 'b5555555-5555-5555-5555-555555555555', '56 7th Ave, New York, NY 10011', 'Chelsea', 'New York', ST_SetSRID(ST_MakePoint(-74.0003, 40.7391), 4326)),
+(gen_random_uuid(), 'b6666666-6666-6666-6666-666666666666', '201 Bleecker St, New York, NY 10012', 'Greenwich Village', 'New York', ST_SetSRID(ST_MakePoint(-74.0012, 40.7301), 4326)),
+(gen_random_uuid(), 'b7777777-7777-7777-7777-777777777777', '28-01 24th Ave, Astoria, NY 11102', 'Astoria', 'New York', ST_SetSRID(ST_MakePoint(-73.9242, 40.7744), 4326));
