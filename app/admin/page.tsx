@@ -20,7 +20,7 @@ export default async function AdminPage() {
     if (authorization.status === 403) redirect("/admin/login?error=forbidden");
     return (
       <main className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
-        <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-700">
+        <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300">
           {authorization.message}
         </p>
       </main>
@@ -44,29 +44,29 @@ export default async function AdminPage() {
 
   return (
     <main className="mx-auto w-full max-w-4xl space-y-6 px-4 py-8 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-zinc-500">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-zinc-400">
         <span>
-          Signed in as <span className="font-medium text-zinc-900">{admin.email ?? admin.actor_id}</span>
+          Signed in as <span className="font-medium text-zinc-50">{admin.email ?? admin.actor_id}</span>
           {admin.mode === "local_basic" && " (local development)"}
         </span>
         {admin.mode === "supabase" && (
           <form action="/auth/signout" method="post">
-            <button type="submit" className="min-h-11 font-medium text-zinc-500 underline hover:text-zinc-900">
+            <button type="submit" className="min-h-11 font-medium text-zinc-400 underline hover:text-zinc-50">
               Sign out
             </button>
           </form>
         )}
       </div>
       <header>
-        <h1 className="text-2xl font-extrabold text-zinc-900">Vetting queue</h1>
-        <p className="mt-1 text-sm text-zinc-500">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-50">Vetting queue</h1>
+        <p className="mt-1 text-sm text-zinc-400">
           Verify each public source before approving. Approval publishes the brand and location, records the
           source as its provenance, and is logged under your account.
         </p>
       </header>
 
       {load_error ? (
-        <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-700">
+        <p role="alert" className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-300">
           {load_error}
         </p>
       ) : (
