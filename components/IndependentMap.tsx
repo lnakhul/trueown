@@ -3,11 +3,10 @@
 import { useEffect, useMemo } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import { tile_config_from_env } from "@/lib/map-tiles";
 import type { AlternativeRecommendation, SelectedLocation } from "@/lib/types";
 
-const DARK_TILE_URL = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
-const DARK_TILE_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const TILE_CONFIG = tile_config_from_env();
 
 /** Amber diamond for the corporate storefront. */
 const corporate_marker_icon = L.divIcon({
@@ -111,7 +110,13 @@ export default function IndependentMap({
       scrollWheelZoom={false}
       className={className}
     >
-      <TileLayer attribution={DARK_TILE_ATTRIBUTION} url={DARK_TILE_URL} subdomains="abcd" maxZoom={20} />
+      <TileLayer
+        attribution={TILE_CONFIG.attribution}
+        url={TILE_CONFIG.url}
+        subdomains={TILE_CONFIG.subdomains}
+        maxZoom={TILE_CONFIG.max_zoom}
+        className={TILE_CONFIG.needs_dark_filter ? "trueown-tiles-darkened" : undefined}
+      />
       <Marker
         position={[target.latitude, target.longitude]}
         icon={target_kind === "corporate" ? corporate_marker_icon : origin_marker_icon}

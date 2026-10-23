@@ -5,6 +5,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Fixed
+- The map showed "API KEY REQUIRED" tiles: CARTO's basemaps now require a key. The default is now keyless OpenStreetMap tiles darkened with a CSS filter (markers keep their colors), and any provider can be configured with `NEXT_PUBLIC_MAP_TILE_*`.
 - Migration `20261025000000_05_admin_audit.sql` failed on Supabase with `type "geometry" does not exist`: the SECURITY DEFINER vetting routines pinned `search_path` to `public` while Supabase installs PostGIS in `extensions`. They now pin `public, extensions, pg_temp`, and the migration is safe to re-run. CI also applies every migration to a Supabase-layout database.
 
 ### Added
