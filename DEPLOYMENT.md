@@ -3,7 +3,7 @@
 ## 1. Supabase (already done for the current project)
 - Migrations applied in filename order, including `20261021000000_reputable_news_source.sql` and `20261022000000_brand_financial_backers.sql`, and `20261023000000_03_regional_markets.sql` (apply it before deploying code that includes it; it backfills `locations.market_id`). **Apply the latter before deploying code that includes it**; the proximity queries select `brands.financial_backers`.
 - `npm run db:import:boundaries -- --yes` run against the hosted database (262 NTA polygons).
-- An admin user exists with `app_metadata.role = 'admin'`.
+- An admin user exists with `app_metadata.role = 'admin'`. Create the user in Supabase Auth, then run `npm run admin:grant -- --email you@example.com --yes` from a trusted machine with `SUPABASE_SERVICE_ROLE_KEY` set locally (`--revoke` removes it). Never deploy the service-role key.
 - Use the **session pooler** connection string for `DATABASE_URL` (IPv4-compatible).
 
 ## 2. Upstash Redis (shared rate limiting, optional but recommended)
@@ -29,7 +29,8 @@
 
    Sentry events are scrubbed of query strings (which carry coordinates), cookies, headers, request bodies and user data before sending.
 
-   Do **not** set `ADMIN_PASSWORD` in production: with Supabase configured, `/admin` uses Supabase Auth. Never add the service-role key.
+   Do **not** set `ADMIN_PASSWORD` in production: it is ignored there, and `/admin` returns 503 unless Supabase Auth is configured. Never add the service-role key.
+   The `DATABASE_URL` role must be allowed to `SET ROLE authenticated` (Supabase's `postgres` role is): admin reads and writes run as `authenticated` with the signed-in admin's claims, so RLS and `is_admin()` apply to them.
 3. Deploy, then open the deployment URL and run the smoke test below.
 
 ## 4. Domain and Turnstile
