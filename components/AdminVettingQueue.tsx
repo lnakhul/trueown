@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import type { PendingSubmission } from "@/lib/db/submissions";
+import type { PendingSubmission, ReviewedSubmission } from "@/lib/db/submissions";
+import { SOURCE_TYPE_LABELS, source_types_for_tier, type OwnershipSourceType } from "@/lib/provenance";
 import type { ApiErrorResponse, IndustryVertical } from "@/lib/types";
 
 const INDUSTRY_OPTIONS: { value: IndustryVertical; label: string }[] = [
@@ -34,10 +35,20 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
   const [unique_selling_proposition, set_unique_selling_proposition] = useState("");
   const [latitude, set_latitude] = useState("");
   const [longitude, set_longitude] = useState("");
+  const [ownership_source_type, set_ownership_source_type] = useState<OwnershipSourceType | "">("");
+  const [review_note, set_review_note] = useState("");
   const [row_status, set_row_status] = useState<RowStatus>({ kind: "idle" });
 
   const is_busy = row_status.kind === "busy";
   const is_independent = corporate_tier === "3";
+  const allowed_source_types = source_types_for_tier(Number(corporate_tier) as 1 | 2 | 3);
+
+  function change_tier(next_tier: string): void {
+    set_corporate_tier(next_tier);
+    // A source type that fits one tier never silently carries over to another.
+    const next_allowed: readonly string[] = source_types_for_tier(Number(next_tier) as 1 | 2 | 3);
+    if (!next_allowed.includes(ownership_source_type)) set_ownership_source_type("");
+  }
 
   async function post_decision(action: "approve" | "reject", body?: unknown): Promise<void> {
     set_row_status({ kind: "busy" });
@@ -66,6 +77,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
       parent_entity: is_independent ? null : parent_entity,
       industry_vertical,
       unique_selling_proposition,
+      ownership_source_type,
       latitude,
       longitude,
     });
@@ -103,7 +115,7 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
             <select
               className={`${input_classes} mt-1`}
               value={corporate_tier}
-              onChange={(event) => set_corporate_tier(event.target.value)}
+              onChange={(event) => change_tier(event.target.value)}
             >
               <option value="1">Tier 1 — PE buyout</option>
               <option value="2">Tier 2 — VC / growth equity</option>
@@ -121,6 +133,24 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
               maxLength={200}
               placeholder="e.g. Acme Capital Partners"
             />
+          </label>
+          <label className="text-xs font-medium text-zinc-600 sm:col-span-2">
+            Source the evidence link comes from (recorded as the brand&apos;s provenance)
+            <select
+              className={`${input_classes} mt-1`}
+              value={ownership_source_type}
+              onChange={(event) => set_ownership_source_type(event.target.value as OwnershipSourceType)}
+              required
+            >
+              <option value="" disabled>
+                Choose a source type…
+              </option>
+              {allowed_source_types.map((source_type) => (
+                <option key={source_type} value={source_type}>
+                  {SOURCE_TYPE_LABELS[source_type]}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="text-xs font-medium text-zinc-600">
             Industry
@@ -176,19 +206,30 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
           </p>
         )}
 
+        <label className="block text-xs font-medium text-zinc-600">
+          Rejection note (optional, kept in the audit log)
+          <input
+            className={`${input_classes} mt-1`}
+            value={review_note}
+            onChange={(event) => set_review_note(event.target.value)}
+            maxLength={500}
+            placeholder="e.g. Source does not name this location"
+          />
+        </label>
+
         <div className="flex flex-col gap-2 sm:flex-row">
           <button
             type="submit"
             disabled={is_busy}
-            className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-wait disabled:bg-zinc-300"
+            className="min-h-11 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-wait disabled:bg-zinc-300"
           >
             {is_busy ? "Working…" : "Approve & publish"}
           </button>
           <button
             type="button"
             disabled={is_busy}
-            onClick={() => void post_decision("reject")}
-            className="rounded-lg border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-wait disabled:opacity-50"
+            onClick={() => void post_decision("reject", { review_note })}
+            className="min-h-11 rounded-lg border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-wait disabled:opacity-50"
           >
             Reject
           </button>
@@ -198,30 +239,111 @@ function SubmissionCard({ submission, on_resolved }: SubmissionCardProps) {
   );
 }
 
-export interface AdminVettingQueueProps {
-  initial_submissions: PendingSubmission[];
+const TIER_LABELS: Record<number, string> = { 1: "Tier 1", 2: "Tier 2", 3: "Tier 3" };
+
+function RecentReviews({ reviews }: { reviews: ReviewedSubmission[] }) {
+  if (reviews.length === 0) {
+    return (
+      <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500">
+        No decisions yet.
+      </p>
+    );
+  }
+  return (
+    <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-200 bg-white">
+      {reviews.map((review) => (
+        <li key={review.id} className="space-y-1 px-5 py-4 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-semibold text-zinc-900">{review.business_name}</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                review.status === "approved" ? "bg-emerald-500/10 text-emerald-700" : "bg-red-500/10 text-red-700"
+              }`}
+            >
+              {review.status === "approved" ? "Approved" : "Rejected"}
+            </span>
+          </div>
+          <p className="text-zinc-500">{review.street_address}</p>
+          <p className="text-zinc-500">
+            {review.reviewer_email ?? "Unknown reviewer"} ·{" "}
+            <time dateTime={review.reviewed_at}>{new Date(review.reviewed_at).toLocaleString()}</time>
+            {review.corporate_tier !== null && ` · ${TIER_LABELS[review.corporate_tier] ?? ""}`}
+            {review.ownership_source_type &&
+              ` · ${SOURCE_TYPE_LABELS[review.ownership_source_type as OwnershipSourceType] ?? review.ownership_source_type}`}
+          </p>
+          {review.review_note && <p className="text-zinc-600">Note: {review.review_note}</p>}
+          <a
+            href={review.evidence_url}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            className="break-all text-blue-700 underline underline-offset-2"
+          >
+            {review.evidence_url}
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
-export default function AdminVettingQueue({ initial_submissions }: AdminVettingQueueProps) {
+export interface AdminVettingQueueProps {
+  initial_submissions: PendingSubmission[];
+  recent_reviews: ReviewedSubmission[];
+}
+
+type QueueTab = "pending" | "recent";
+
+export default function AdminVettingQueue({ initial_submissions, recent_reviews }: AdminVettingQueueProps) {
   const [submissions, set_submissions] = useState(initial_submissions);
+  const [active_tab, set_active_tab] = useState<QueueTab>("pending");
 
   function remove_from_queue(submission_id: string): void {
     set_submissions((current) => current.filter((entry) => entry.id !== submission_id));
   }
 
-  if (submissions.length === 0) {
-    return (
-      <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500">
-        The queue is clear. No pending submissions.
-      </p>
-    );
-  }
+  const tabs: { id: QueueTab; label: string }[] = [
+    { id: "pending", label: `Pending (${submissions.length})` },
+    { id: "recent", label: "Recently reviewed" },
+  ];
 
   return (
-    <ul className="space-y-4">
-      {submissions.map((submission) => (
-        <SubmissionCard key={submission.id} submission={submission} on_resolved={remove_from_queue} />
-      ))}
-    </ul>
+    <div className="space-y-4">
+      <div role="tablist" aria-label="Vetting queue views" className="flex gap-2">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            id={`queue-tab-${tab.id}`}
+            type="button"
+            role="tab"
+            aria-selected={active_tab === tab.id}
+            aria-controls={`queue-panel-${tab.id}`}
+            onClick={() => set_active_tab(tab.id)}
+            className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+              active_tab === tab.id
+                ? "border-zinc-900 bg-zinc-900 text-white"
+                : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-900"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div id={`queue-panel-${active_tab}`} role="tabpanel" aria-labelledby={`queue-tab-${active_tab}`}>
+        {active_tab === "recent" ? (
+          <RecentReviews reviews={recent_reviews} />
+        ) : submissions.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-zinc-300 px-4 py-10 text-center text-sm text-zinc-500">
+            The queue is clear. No pending submissions.
+          </p>
+        ) : (
+          <ul className="space-y-4">
+            {submissions.map((submission) => (
+              <SubmissionCard key={submission.id} submission={submission} on_resolved={remove_from_queue} />
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }

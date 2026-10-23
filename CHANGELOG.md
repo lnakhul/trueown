@@ -5,6 +5,11 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Added
+- Admin console hardening (migration `20261025000000_05_admin_audit.sql`): `approve_submission` / `reject_submission` check `is_admin()` against the request's JWT claims, record `reviewed_by` (and an optional `review_note`), and append to the new admin-only `admin_audit_log` in the same transaction. Direct `UPDATE` on `submissions` is revoked for every API role.
+- Approval now requires an `ownership_source_type` that fits the tier; the submission's evidence URL and today's date become the brand's provenance.
+- `lib/auth/admin-session.ts`: every admin route handler and the admin page re-verify the Supabase user (`getUser`) instead of relying on middleware alone; admin database work runs as `authenticated` with the verified claims (`lib/db/as-admin.ts`).
+- Vetting console: source-type selector, rejection notes and a "Recently reviewed" tab showing who decided and on what source.
+- `npm run admin:grant -- --email <address> --yes` sets or revokes `app_metadata.role = 'admin'` via the service-role key (CLI only).
 - Multi-market data pipeline (migration `20261024000000_04_market_scoped_data.sql`): `markets.slug` and canonical `markets.city_label`; `locations.city` and `neighborhood_boundaries.city` are now set from the market by the database, so labels can no longer drift.
 - `brands.home_market_id`: Tier 3 independents are scoped to their market (same-named independents in different cities stay separate brands); Tier 1/2 brands stay national. The database refuses an independent storefront outside its home market.
 - Generic provenance source types `state_business_registry` and `local_press` (NYC-only `nys_dos_corporations` and `eater_ny` still accepted).
@@ -24,6 +29,8 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - Accessibility pass: skip link, focus-visible styles, reduced-motion support, dialog focus trap, combobox neighborhood search, contrast and touch-target fixes.
 
 ### Changed
+- HTTP Basic admin auth works only outside production; a production build without Supabase Auth returns 503 for `/admin`.
+- **Breaking (API):** `POST /api/admin/submissions/:id/approve` requires `ownership_source_type` and no longer accepts `city`; `.../reject` accepts an optional `review_note`.
 - The venue CSV `city` column is optional and legacy: if filled it must equal the market's city label. Seed data now uses `New York` (was `New York City`), so `/api/catalog` lists `New York`.
 - `approve_submission` derives the city from the market; its `p_city` argument is ignored.
 - **Breaking (API):** `vertical` is now required for `scope=nearest` and `neighborhood=` lookups (400 without it); the UI no longer offers "All types".

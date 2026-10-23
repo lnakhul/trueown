@@ -60,13 +60,13 @@ Copy [.env.example](.env.example) to `.env.local`. Never commit real values.
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public Supabase values, protected by RLS |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile; the secret is server-only |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Optional shared rate limiting; unset = per-instance in-memory |
-| `ADMIN_PASSWORD` | HTTP Basic fallback for `/admin` when Supabase is not configured |
+| `ADMIN_PASSWORD` | HTTP Basic fallback for `/admin` when Supabase is not configured (local development only; ignored in production) |
 
 Never put the Supabase service-role key in client code.
 
 ## Database
 
-Migrations live in `supabase/migrations/` and run in filename order; `supabase/seed.sql` holds sample data. On hosted Supabase, paste each file's **contents** into the SQL Editor, in order. Create an admin user in Supabase Auth and mark it as an admin as described in the RLS migration.
+Migrations live in `supabase/migrations/` and run in filename order; `supabase/seed.sql` holds sample data. On hosted Supabase, paste each file's **contents** into the SQL Editor, in order. Create an admin user in Supabase Auth, then grant the role with `npm run admin:grant -- --email you@example.com --yes` (needs `SUPABASE_SERVICE_ROLE_KEY` in your local shell only). Every approval or rejection is checked against that user's JWT inside the database and written to `admin_audit_log`.
 
 **Markets.** The `markets` table lists the cities TrueOwn serves (`active` or `coming_soon`, each with a geographic center). Every location is assigned to the market whose center is within 50 miles, and inserts outside every market are rejected, so add a market before importing a new city. `GET /api/proximity` resolves the nearest active market first; outside 50 miles of every active one it returns `{ "status": "outside_active_market", "closest_active_market": { ... } }`. Searches that start from a location (`scope=nearest`, `neighborhood=`) require `vertical=<industry_vertical>` and are isolated to that vertical and market.
 
