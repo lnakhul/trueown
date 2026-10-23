@@ -623,7 +623,15 @@ export async function fetch_neighborhood_discovery(
 ): Promise<NeighborhoodDiscovery | null> {
   const centroid = await fetch_neighborhood_centroid(neighborhood, pool, filters.city);
   if (!centroid) return null;
+  return fetch_discovery_for_centroid(centroid, pool, filters);
+}
 
+/** Runs the standard 1500m search plus the neighborhood's corporate brands from a resolved centroid. */
+export async function fetch_discovery_for_centroid(
+  centroid: NeighborhoodCentroid,
+  pool: Pool = get_database_pool(),
+  filters: DiscoveryFilters = NO_DISCOVERY_FILTERS,
+): Promise<NeighborhoodDiscovery> {
   const origin_alternatives = await fetch_nearby_independent_alternatives(
     centroid.latitude,
     centroid.longitude,
@@ -638,6 +646,27 @@ export async function fetch_neighborhood_discovery(
     filters,
   );
   return { centroid, results, origin_alternatives };
+}
+
+/**
+ * Free-text address search: the nearest corporate storefronts and the independents around
+ * an arbitrary (geocoded) point, both isolated to the market and vertical in `filters`.
+ */
+export async function fetch_discovery_for_point(
+  latitude: number,
+  longitude: number,
+  pool: Pool = get_database_pool(),
+  filters: DiscoveryFilters = NO_DISCOVERY_FILTERS,
+): Promise<Pick<NeighborhoodDiscovery, "results" | "origin_alternatives">> {
+  const origin_alternatives = await fetch_nearby_independent_alternatives(
+    latitude,
+    longitude,
+    filters.industry_vertical,
+    pool,
+    filters.market_id,
+  );
+  const results = await fetch_nearest_corporate_discovery(latitude, longitude, pool, filters);
+  return { results, origin_alternatives };
 }
 
 /**

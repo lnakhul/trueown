@@ -13,6 +13,13 @@ import {
   fetch_neighborhood_centroid,
   fetch_neighborhood_suggestions,
 } from "@/lib/db/proximity";
+import * as telemetry from "@/lib/telemetry";
+import {
+  GEOCODE_CACHE_TTL_SECONDS,
+  clear_geocode_memory_cache,
+  geocode_cache_key,
+  looks_like_street_address,
+} from "@/lib/geocoding";
 import type { NearbyResponse, OutsideMarketResponse, ProximityResponse } from "@/lib/types";
 
 /**
@@ -27,14 +34,56 @@ const BLANK_STREET_ADDRESS = "186 W 4th St";
 
 let test_pool: Pool;
 
+/* Network stub: the geocoder (Nominatim) and Redis are faked; any other call is a test bug. */
+const GEOCODER_HOST = "nominatim.openstreetmap.org";
+const REDIS_HOST = "fake-cache.upstash.io";
+const geocoder_queries: string[] = [];
+const redis_commands: string[][] = [];
+const redis_store = new Map<string, string>();
+let geocoder_response: (query: string) => Response | Promise<Response> = () => json_response([]);
+let fetch_spy: jest.SpyInstance;
+
+function json_response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+async function fake_network(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  if (url.hostname === GEOCODER_HOST) {
+    const query = url.searchParams.get("q") ?? "";
+    geocoder_queries.push(query);
+    return geocoder_response(query);
+  }
+  if (url.hostname === REDIS_HOST) {
+    const body = JSON.parse(String(init?.body)) as unknown;
+    if (url.pathname === "/pipeline") return json_response([{ result: 1 }, { result: 1 }, { result: 1 }]);
+    const command = body as string[];
+    redis_commands.push(command);
+    if (command[0] === "SET") redis_store.set(command[1]!, command[2]!);
+    return json_response({ result: command[0] === "GET" ? (redis_store.get(command[1]!) ?? null) : "OK" });
+  }
+  throw new Error(`Unexpected network call to ${url.hostname}`);
+}
+
 beforeAll(async () => {
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  process.env.GEOCODER_MAX_REQUESTS_PER_SECOND = "1000";
+  fetch_spy = jest.spyOn(global, "fetch").mockImplementation(fake_network);
   // The route handler resolves its own pool from DATABASE_URL; keep both on the same database.
   process.env.DATABASE_URL = database_url;
   test_pool = new Pool({ connectionString: database_url, max: 2 });
   await ensure_boundaries_loaded(test_pool);
 });
 
+beforeEach(() => {
+  geocoder_queries.length = 0;
+  geocoder_response = () => json_response([]);
+  clear_geocode_memory_cache();
+});
+
 afterAll(async () => {
+  fetch_spy.mockRestore();
   await test_pool.end();
   await get_database_pool().end();
 });
@@ -502,4 +551,254 @@ describe("regional markets and verticals", () => {
     );
     expect(restaurants).toEqual([]);
   });
+});
+
+/* ------------------------------------------------------------------------- */
+/* G: geocoding fallback and centroid router                                   */
+/* ------------------------------------------------------------------------- */
+
+const LIC_TEXT = "45-02 11th St, Long Island City, NY 11101";
+const WEST_4TH_TEXT = "186 W 4th St, New York, NY 10014";
+
+function nominatim_hit(latitude: number, longitude: number): Response {
+  return json_response([{ lat: String(latitude), lon: String(longitude), display_name: "ignored" }]);
+}
+
+describe("G: geocoding and centroid router", () => {
+  const unhandled: unknown[] = [];
+  const record_unhandled = (reason: unknown) => unhandled.push(reason);
+  beforeAll(() => {
+    process.on("unhandledRejection", record_unhandled);
+  });
+  afterAll(() => {
+    process.off("unhandledRejection", record_unhandled);
+  });
+  afterEach(() => {
+    expect(unhandled).toEqual([]);
+  });
+
+  test("an active neighborhood name resolves to its NTA polygon centroid without calling the geocoder", async () => {
+    const expected = await fetch_neighborhood_centroid("West Village", test_pool);
+    expect(expected).not.toBeNull();
+
+    const response = await call_proximity("?neighborhood=West%20Village&vertical=coffee_bakery");
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as NearbyResponse;
+    expect(payload.origin).toEqual({
+      kind: "neighborhood",
+      neighborhood: expected!.neighborhood,
+      latitude: expected!.latitude,
+      longitude: expected!.longitude,
+    });
+    expect(geocoder_queries).toEqual([]);
+  });
+
+  test("street addresses are recognised; neighborhood names are not", () => {
+    expect(looks_like_street_address("45-02 11th St, Long Island City")).toBe(true);
+    expect(looks_like_street_address("186 W 4th St")).toBe(true);
+    expect(looks_like_street_address("West Village")).toBe(false);
+    expect(looks_like_street_address("11101")).toBe(false);
+  });
+
+  test("a street address is geocoded, market-checked and searched around the resolved point", async () => {
+    geocoder_response = () => nominatim_hit(40.7324, -74.0021);
+    const response = await call_proximity(`?neighborhood=${encodeURIComponent(WEST_4TH_TEXT)}&vertical=coffee_bakery`);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as NearbyResponse;
+
+    expect(payload.origin).toEqual({ kind: "address", label: WEST_4TH_TEXT, latitude: 40.7324, longitude: -74.0021 });
+    expect(payload.results.map((entry) => entry.target.brand_name)).toContain("Blank Street Coffee");
+    expect(payload.origin_alternatives.map((alternative) => alternative.brand_name)).toContain("Porto Rico Importing Co.");
+    expect(geocoder_queries).toHaveLength(1);
+  });
+
+  test("an unknown name falls back to the geocoder, and a provider miss is a clean 404", async () => {
+    const response = await call_proximity("?neighborhood=Atlantis&vertical=coffee_bakery");
+    expect(response.status).toBe(404);
+    expect(geocoder_queries).toEqual(["atlantis"]);
+  });
+
+  test("an address outside every active market gets the standard outside_active_market payload", async () => {
+    geocoder_response = () => nominatim_hit(41.8781, -87.6298); // Chicago is coming_soon
+    const response = await call_proximity(`?neighborhood=${encodeURIComponent("233 S Wacker Dr, Chicago")}&vertical=coffee_bakery`);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as OutsideMarketResponse;
+    expect(payload.status).toBe("outside_active_market");
+    expect(payload.closest_active_market?.city_name).toBe("New York City");
+    expect(payload).not.toHaveProperty("results");
+  });
+
+  test.each([
+    ["the provider is unreachable", () => Promise.reject(new TypeError("fetch failed"))],
+    ["the provider returns 429", () => json_response({}, 429)],
+    ["the provider returns malformed JSON", () => new Response("<html>", { status: 200 })],
+    ["the provider returns an invalid coordinate", () => nominatim_hit(999, 999)],
+  ])("%s -> 503 JSON, never an unhandled error", async (_label, behaviour) => {
+    geocoder_response = behaviour;
+    const response = await call_proximity(`?neighborhood=${encodeURIComponent(LIC_TEXT)}&vertical=coffee_bakery`);
+    expect(response.status).toBe(503);
+    expect(typeof ((await response.json()) as { error: string }).error).toBe("string");
+  });
+
+  test("resolved coordinates are cached 30 days in Redis under a hashed key, and served from it", async () => {
+    process.env.UPSTASH_REDIS_REST_URL = `https://${REDIS_HOST}`;
+    process.env.UPSTASH_REDIS_REST_TOKEN = "test-token";
+    redis_commands.length = 0;
+    redis_store.clear();
+    try {
+      geocoder_response = () => nominatim_hit(40.7324, -74.0021);
+      const query = `?neighborhood=${encodeURIComponent(WEST_4TH_TEXT)}&vertical=coffee_bakery`;
+      expect((await call_proximity(query)).status).toBe(200);
+      expect(geocoder_queries).toHaveLength(1);
+
+      const set_command = redis_commands.find((command) => command[0] === "SET");
+      expect(set_command?.slice(3)).toEqual(["EX", String(GEOCODE_CACHE_TTL_SECONDS)]);
+      expect(GEOCODE_CACHE_TTL_SECONDS).toBe(2_592_000);
+      expect(set_command?.[1]).toBe(geocode_cache_key(WEST_4TH_TEXT));
+      expect(set_command?.[1]).not.toMatch(/w 4th/i);
+
+      // A different instance (empty process cache) is served by Redis, not the provider.
+      clear_geocode_memory_cache();
+      expect((await call_proximity(query)).status).toBe(200);
+      expect(geocoder_queries).toHaveLength(1);
+    } finally {
+      delete process.env.UPSTASH_REDIS_REST_URL;
+      delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    }
+  });
+
+  test("a Redis outage degrades to the provider instead of failing the search", async () => {
+    process.env.UPSTASH_REDIS_REST_URL = `https://${REDIS_HOST}`;
+    process.env.UPSTASH_REDIS_REST_TOKEN = "test-token";
+    const base_network = fake_network;
+    fetch_spy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input)).hostname === REDIS_HOST) throw new TypeError("socket hang up");
+      return base_network(input, init);
+    });
+    try {
+      geocoder_response = () => nominatim_hit(40.7324, -74.0021);
+      const response = await call_proximity(`?neighborhood=${encodeURIComponent(WEST_4TH_TEXT)}&vertical=coffee_bakery`);
+      expect(response.status).toBe(200);
+    } finally {
+      fetch_spy.mockImplementation(fake_network);
+      delete process.env.UPSTASH_REDIS_REST_URL;
+      delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    }
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/* H: telemetry isolation                                                      */
+/* ------------------------------------------------------------------------- */
+
+const NEAREST_QUERY = "?scope=nearest&lat=40.7324&lng=-74.0021&vertical=coffee_bakery";
+const settle = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function expect_healthy_proximity_payload(): Promise<void> {
+  const response = await call_proximity(NEAREST_QUERY);
+  expect(response.status).toBe(200);
+  const payload = (await response.json()) as NearbyResponse;
+  expect(Array.isArray(payload.results)).toBe(true);
+  expect(payload.results.length).toBeGreaterThan(0);
+  expect(payload.results.some((entry) => entry.alternatives.length > 0)).toBe(true);
+}
+
+describe("H: telemetry isolation", () => {
+  const unhandled: unknown[] = [];
+  const record_unhandled = (reason: unknown) => unhandled.push(reason);
+  beforeAll(() => {
+    process.on("unhandledRejection", record_unhandled);
+  });
+  beforeEach(() => {
+    telemetry.reset_telemetry_stats();
+    unhandled.length = 0;
+  });
+  afterEach(() => {
+    telemetry.register_telemetry_sink(null);
+    jest.restoreAllMocks();
+    // restoreAllMocks also restores the network stub; reinstall it for later tests.
+    fetch_spy = jest.spyOn(global, "fetch").mockImplementation(fake_network);
+    expect(unhandled).toEqual([]);
+  });
+  afterAll(() => {
+    process.off("unhandledRejection", record_unhandled);
+  });
+
+  test("events carry only market id, vertical and search type for both search kinds", async () => {
+    const events: telemetry.ProximitySearchEvent[] = [];
+    telemetry.register_telemetry_sink((event) => {
+      events.push(event);
+    });
+    const nyc = await test_pool.query<{ id: string }>("SELECT id FROM markets WHERE city_name = 'New York City'");
+
+    await call_proximity(NEAREST_QUERY);
+    await call_proximity("?neighborhood=West%20Village&vertical=coffee_bakery");
+    await settle(50);
+
+    expect(events.map((event) => event.search_type).sort()).toEqual(["nearest", "text_fallback"]);
+    for (const event of events) {
+      expect(Object.keys(event).sort()).toEqual(["industry_vertical", "market_id", "name", "occurred_at", "search_type"]);
+      expect(event.market_id).toBe(nyc.rows[0]!.id);
+      expect(event.industry_vertical).toBe("coffee_bakery");
+    }
+  });
+
+  test("outside-market and invalid requests emit no telemetry", async () => {
+    const events: telemetry.ProximitySearchEvent[] = [];
+    telemetry.register_telemetry_sink((event) => {
+      events.push(event);
+    });
+    await call_proximity("?scope=nearest&lat=51.5&lng=-0.12&vertical=coffee_bakery");
+    await call_proximity("?scope=nearest&lat=40.7324&lng=-74.0021");
+    await settle(50);
+    expect(events).toEqual([]);
+  });
+
+  test("a sink that throws synchronously still yields 200 and the proximity array", async () => {
+    telemetry.register_telemetry_sink(() => {
+      throw new Error("socket hang up");
+    });
+    await expect_healthy_proximity_payload();
+    await settle(50);
+    expect(telemetry.get_telemetry_stats().failed).toBeGreaterThanOrEqual(1);
+  });
+
+  test("a sink that rejects asynchronously (network failure) still yields 200", async () => {
+    telemetry.register_telemetry_sink(() => Promise.reject(new Error("ECONNRESET")));
+    await expect_healthy_proximity_payload();
+    await settle(50);
+    expect(telemetry.get_telemetry_stats().failed).toBeGreaterThanOrEqual(1);
+  });
+
+  test("a sink that never responds does not delay the response", async () => {
+    telemetry.register_telemetry_sink(() => new Promise<void>(() => undefined));
+    const started_at = Date.now();
+    await expect_healthy_proximity_payload();
+    expect(Date.now() - started_at).toBeLessThan(telemetry.TELEMETRY_TIMEOUT_MS);
+  });
+
+  test("a complete crash of the telemetry recorder itself still yields 200", async () => {
+    jest.spyOn(telemetry, "record_proximity_search").mockImplementation(() => {
+      throw new Error("telemetry subsystem down");
+    });
+    fetch_spy = jest.spyOn(global, "fetch").mockImplementation(fake_network);
+    await expect_healthy_proximity_payload();
+
+    const text_response = await call_proximity("?neighborhood=West%20Village&vertical=coffee_bakery");
+    expect(text_response.status).toBe(200);
+  });
+
+  test("a flood of events is capped instead of queueing without bound", async () => {
+    // Earlier tests may leave hung deliveries in flight; wait for them to time out.
+    await settle(telemetry.TELEMETRY_TIMEOUT_MS + 200);
+    telemetry.reset_telemetry_stats();
+    telemetry.register_telemetry_sink(() => new Promise<void>(() => undefined));
+    for (let index = 0; index < telemetry.TELEMETRY_MAX_IN_FLIGHT + 10; index += 1) {
+      telemetry.record_proximity_search({ market_id: "m", industry_vertical: "coffee_bakery", search_type: "nearest" });
+    }
+    expect(telemetry.get_telemetry_stats().dropped).toBe(10);
+    // Let the hung deliveries time out so the shared in-flight counter is released.
+    await settle(telemetry.TELEMETRY_TIMEOUT_MS + 200);
+    expect(telemetry.get_telemetry_stats().failed).toBe(telemetry.TELEMETRY_MAX_IN_FLIGHT);
+  }, 15_000);
 });

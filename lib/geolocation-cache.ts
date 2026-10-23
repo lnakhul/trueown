@@ -35,7 +35,7 @@ function is_cached_discovery_state(value: unknown): value is CachedDiscoveryStat
   const origin = payload.origin as Record<string, unknown> | null;
   if (typeof origin !== "object" || origin === null) return false;
   return (
-    (origin.kind === "coordinates" || origin.kind === "neighborhood") &&
+    (origin.kind === "coordinates" || origin.kind === "neighborhood" || origin.kind === "address") &&
     is_finite_number(origin.latitude) &&
     is_finite_number(origin.longitude)
   );

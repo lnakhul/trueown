@@ -18,7 +18,7 @@ The schema is built to extend beyond coffee into restaurants, bars and retail, a
 ## Features
 
 - Proximity search with PostGIS `ST_DWithin` / `ST_Distance`, sorted nearest first
-- Browser geolocation (cached 15 minutes) with a neighborhood-search fallback and lookahead
+- Browser geolocation (cached 15 minutes) with a neighborhood or street-address search fallback (Nominatim geocoding, cached 30 days in Upstash Redis)
 - Official NYC Neighborhood Tabulation Area (NTA 2020) polygons; centroids computed with `ST_Centroid`
 - Crowdsourced tip form with required evidence URL, Cloudflare Turnstile, honeypot and rate limiting
 - Admin vetting queue (Supabase Auth) to approve or reject tips
