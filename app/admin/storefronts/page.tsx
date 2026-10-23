@@ -7,7 +7,7 @@ import { report_error } from "@/lib/monitoring";
 
 export const dynamic = "force-dynamic";
 
-const VIEWS: StorefrontQueueView[] = ["chains", "possible", "independents"];
+const VIEWS: StorefrontQueueView[] = ["chains", "possible", "independents", "rejected"];
 
 export default async function AdminStorefrontsPage({ searchParams }: { searchParams: { view?: string; q?: string } }) {
   const authorization = await resolve_request_admin();

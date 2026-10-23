@@ -7,11 +7,12 @@ import type {
   ChainGroup,
   IndependentGroup,
   PossibleMatch,
+  RejectedGroup,
   StorefrontCandidate,
   StorefrontQueue,
   StorefrontQueueView,
 } from "@/lib/db/storefronts";
-import { INDEPENDENT_SOURCE_TYPES, SOURCE_TYPE_LABELS } from "@/lib/provenance";
+import { CORPORATE_SOURCE_TYPES, INDEPENDENT_SOURCE_TYPES, SOURCE_TYPE_LABELS } from "@/lib/provenance";
 import type { ApiErrorResponse } from "@/lib/types";
 
 const MAX_BATCH = 500;
@@ -240,8 +241,122 @@ function PossibleRow({ match }: { match: PossibleMatch }) {
   );
 }
 
+/**
+ * A chain the queue does not know yet, backed by private equity or venture capital:
+ * create the brand with its evidence, then approve its storefronts under Chain matches.
+ */
+function CorporateBrandForm({ group }: { group: IndependentGroup }) {
+  const router = useRouter();
+  const [brand_name, set_brand_name] = useState(group.name);
+  const [tier, set_tier] = useState<1 | 2>(1);
+  const [parent_entity, set_parent_entity] = useState("");
+  const [backers, set_backers] = useState("");
+  const [source_type, set_source_type] = useState("");
+  const [source_url, set_source_url] = useState("");
+  const [is_busy, set_is_busy] = useState(false);
+  const [error_message, set_error_message] = useState<string | null>(null);
+  const first = group.candidates[0];
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!first) return;
+    set_is_busy(true);
+    set_error_message(null);
+    const failure = await post("corporate-brand", {
+      candidate_id: first.id,
+      brand_name,
+      corporate_tier: tier,
+      parent_entity,
+      financial_backers: backers,
+      ownership_source_type: source_type,
+      ownership_source_url: source_url,
+    });
+    set_is_busy(false);
+    if (failure) {
+      set_error_message(failure);
+      return;
+    }
+    // Its shops are now chain matches: go straight to them for "Approve all".
+    router.push(`/admin/storefronts?view=chains&q=${encodeURIComponent(brand_name)}`);
+    router.refresh();
+  }
+
+  return (
+    <form onSubmit={(event) => void submit(event)} className="space-y-3 border-t border-hairline pt-3">
+      <p className="text-zinc-400">
+        Creates the brand with its ownership evidence. Its {group.location_count} storefront
+        {group.location_count === 1 ? "" : "s"} then appear under Chain matches, where you approve them. Use this only
+        when a public source names the private equity or venture capital investor.
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="text-xs font-medium text-zinc-400">
+          Brand name as it should appear
+          <input className={`${input_classes} mt-1`} value={brand_name} onChange={(event) => set_brand_name(event.target.value)} maxLength={200} required />
+        </label>
+        <label className="text-xs font-medium text-zinc-400">
+          Tier
+          <select
+            className={`${input_classes} mt-1`}
+            value={tier}
+            onChange={(event) => {
+              set_tier(Number(event.target.value) as 1 | 2);
+              set_source_type("");
+            }}
+          >
+            <option value={1}>Tier 1 — majority owned or controlled by private equity</option>
+            <option value={2}>Tier 2 — venture capital / growth equity funded</option>
+          </select>
+        </label>
+        <label className="text-xs font-medium text-zinc-400">
+          Owner or lead investor
+          <input
+            className={`${input_classes} mt-1`}
+            value={parent_entity}
+            onChange={(event) => set_parent_entity(event.target.value)}
+            maxLength={200}
+            placeholder="e.g. TA Associates (majority)"
+            required
+          />
+        </label>
+        <label className="text-xs font-medium text-zinc-400">
+          Named backers, comma-separated (only ones you can cite)
+          <input className={`${input_classes} mt-1`} value={backers} onChange={(event) => set_backers(event.target.value)} placeholder="e.g. TA Associates, Bain Capital" />
+        </label>
+        <label className="text-xs font-medium text-zinc-400">
+          Evidence type
+          <select className={`${input_classes} mt-1`} value={source_type} onChange={(event) => set_source_type(event.target.value)} required>
+            <option value="" disabled>
+              Choose…
+            </option>
+            {CORPORATE_SOURCE_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {SOURCE_TYPE_LABELS[type]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs font-medium text-zinc-400">
+          Evidence link
+          <input
+            className={`${input_classes} mt-1`}
+            type="url"
+            value={source_url}
+            onChange={(event) => set_source_url(event.target.value)}
+            placeholder="https://… press release, filing or major news article"
+            required
+          />
+        </label>
+      </div>
+      <button type="submit" disabled={is_busy} className={primary_button}>
+        {is_busy ? "Saving…" : "Add brand and move its storefronts"}
+      </button>
+      <ErrorLine message={error_message} />
+    </form>
+  );
+}
+
 function IndependentCard({ group }: { group: IndependentGroup }) {
-  const [panel, set_panel] = useState<"none" | "add" | "reject" | "list">("none");
+  const [panel, set_panel] = useState<"none" | "corporate" | "add" | "reject" | "list">("none");
   const first_placeable = group.candidates.find((candidate) => candidate.latitude !== null) ?? null;
   const [brand_name, set_brand_name] = useState(group.name);
   const [source_type, set_source_type] = useState("");
@@ -279,7 +394,15 @@ function IndependentCard({ group }: { group: IndependentGroup }) {
       </div>
       {group.location_count === 1 && group.candidates[0] && <CandidateLine candidate={group.candidates[0]} />}
       <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={() => set_panel((open) => (open === "add" ? "none" : "add"))} className={secondary_button}>
+        <button
+          type="button"
+          onClick={() => set_panel((open) => (open === "corporate" ? "none" : "corporate"))}
+          aria-expanded={panel === "corporate"}
+          className={secondary_button}
+        >
+          Add as PE/VC-backed brand…
+        </button>
+        <button type="button" onClick={() => set_panel((open) => (open === "add" ? "none" : "add"))} aria-expanded={panel === "add"} className={secondary_button}>
           Add as independent…
         </button>
         <button type="button" onClick={() => set_panel((open) => (open === "reject" ? "none" : "reject"))} className={secondary_button}>
@@ -292,6 +415,7 @@ function IndependentCard({ group }: { group: IndependentGroup }) {
         )}
       </div>
 
+      {panel === "corporate" && <CorporateBrandForm group={group} />}
       {panel === "add" && (
         <form onSubmit={(event) => void add(event)} className="space-y-3 border-t border-hairline pt-3">
           <p className="text-zinc-400">
@@ -354,6 +478,51 @@ function IndependentCard({ group }: { group: IndependentGroup }) {
   );
 }
 
+function RejectedCard({ group }: { group: RejectedGroup }) {
+  const [show_list, set_show_list] = useState(false);
+  const { is_busy, error_message, run } = use_action();
+  const ids = group.candidates.map((candidate) => candidate.id);
+  return (
+    <li className="space-y-3 rounded-xl border border-hairline bg-surface-card p-4 shadow-hairline text-sm">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="font-semibold text-zinc-50">{group.name}</p>
+          <p className="text-zinc-500">
+            {group.candidates.length} location{group.candidates.length === 1 ? "" : "s"} · rejected
+            {group.reviewed_at && ` ${new Date(group.reviewed_at).toLocaleDateString()}`}
+            {group.reason && ` · “${group.reason}”`}
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={is_busy}
+          onClick={() => void run(() => post_in_batches("reopen", ids, { note: "Reopened from the Rejected list" }))}
+          className={secondary_button}
+        >
+          {is_busy ? "Reopening…" : `Reopen ${ids.length > 1 ? `all ${ids.length}` : ""}`.trim()}
+        </button>
+        {ids.length > 1 && (
+          <button type="button" onClick={() => set_show_list((open) => !open)} className={secondary_button}>
+            {show_list ? "Hide locations" : "Show locations"}
+          </button>
+        )}
+      </div>
+      <ErrorLine message={error_message} />
+      {(show_list || ids.length === 1) && (
+        <ul className="divide-y divide-white/[0.06] border-t border-hairline">
+          {group.candidates.map((candidate) => (
+            <li key={candidate.id} className="py-2">
+              <CandidateLine candidate={candidate} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 export default function AdminStorefrontQueue({
   queue,
   view,
@@ -367,6 +536,7 @@ export default function AdminStorefrontQueue({
     { id: "chains", label: `Chain matches (${queue.counts.chains})` },
     { id: "possible", label: `Possible matches (${queue.counts.possible})` },
     { id: "independents", label: `Possible independents (${queue.counts.independents})` },
+    { id: "rejected", label: `Rejected (${queue.counts.rejected})` },
   ];
   const href = (next: StorefrontQueueView) => `/admin/storefronts?view=${next}${search ? `&q=${encodeURIComponent(search)}` : ""}`;
 
@@ -438,9 +608,9 @@ export default function AdminStorefrontQueue({
           <>
             <p className="text-sm text-zinc-400">
               Shops that match no brand you track, grouped by name with the most locations first. Big groups are usually
-              chains you don&apos;t track yet: reject them, or add the brand with its evidence (
-              <code className="text-xs">npm run db:import:brands</code>) and re-run the storefront import so they show up
-              as chain matches.
+              chains you don&apos;t track yet. If a public source names a private equity or venture capital investor, use{" "}
+              <span className="font-semibold text-zinc-200">Add as PE/VC-backed brand</span>; if it is a corporate chain
+              that is not PE/VC-backed, reject it as &ldquo;A chain we don&apos;t track&rdquo; (you can reopen it later).
               {queue.independents_truncated && " Showing the first groups; search to find others."}
             </p>
             <ul className="space-y-3">
@@ -450,7 +620,26 @@ export default function AdminStorefrontQueue({
             </ul>
           </>
         ))}
+
+      {view === "rejected" && <RejectedView groups={queue.rejected} />}
     </div>
+  );
+}
+
+function RejectedView({ groups }: { groups: RejectedGroup[] }) {
+  if (groups.length === 0) return <Empty text="Nothing has been rejected." />;
+  return (
+    <>
+      <p className="text-sm text-zinc-400">
+        Rejected shops stay off the queue on every re-import. Reopen them if a brand was rejected too early (for example
+        a chain you have since added with its evidence): they go back to the queue and are matched again.
+      </p>
+      <ul className="space-y-3">
+        {groups.map((group) => (
+          <RejectedCard key={`${group.name}|${group.reason ?? ""}`} group={group} />
+        ))}
+      </ul>
+    </>
   );
 }
 
