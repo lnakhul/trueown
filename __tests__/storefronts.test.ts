@@ -1,6 +1,14 @@
 import { Pool, PoolClient } from "pg";
 import { LOCAL_DEV_ADMIN_EMAIL, LOCAL_DEV_ADMIN_ID, type AdminIdentity } from "@/lib/auth/admin-session";
-import { approve_storefronts, add_independent, fetch_storefront_queue, reject_storefronts, StorefrontChangeRejectedError } from "@/lib/db/storefronts";
+import {
+  add_corporate_brand,
+  add_independent,
+  approve_storefronts,
+  fetch_storefront_queue,
+  reject_storefronts,
+  reopen_storefronts,
+  StorefrontChangeRejectedError,
+} from "@/lib/db/storefronts";
 import { fetch_market_id } from "@/lib/import/boundaries";
 import {
   build_candidates,
@@ -16,7 +24,13 @@ import {
   type MatchableBrand,
   type StorefrontCandidateInput,
 } from "@/lib/import/storefronts";
-import { validate_add_independent, validate_approve_storefronts, validate_reject_storefronts } from "@/lib/storefront-review";
+import {
+  validate_add_corporate_brand,
+  validate_add_independent,
+  validate_approve_storefronts,
+  validate_reject_storefronts,
+  validate_reopen_storefronts,
+} from "@/lib/storefront-review";
 
 const brand = (id: string, name: string): MatchableBrand => ({ id, name, industry_vertical: "coffee_bakery" });
 const BRANDS = [
@@ -314,7 +328,7 @@ describe("storefront queue (database)", () => {
       3,
     );
     const queue = await fetch_storefront_queue(admin, "nyc", "zz ", pool);
-    expect(queue.counts).toEqual({ chains: 1, possible: 0, independents: 2 });
+    expect(queue.counts).toEqual({ chains: 1, possible: 0, independents: 2, rejected: 0 });
     expect(queue.independents).toEqual([expect.objectContaining({ name: "ZZ Indie Twins", location_count: 2 })]);
     const by_brand = await fetch_storefront_queue(admin, "nyc", "blank street", pool);
     expect(by_brand.chains.find((group) => group.brand_id === blank_street_id)?.candidates.length).toBeGreaterThan(0);
@@ -340,5 +354,187 @@ describe("storefront queue (database)", () => {
       await client.query("ROLLBACK").catch(() => undefined);
       client.release();
     }
+  });
+});
+
+describe("PE/VC brand from the queue and undoing rejections", () => {
+  const id = "5b0d8a1e-7c2f-4e93-a6d1-3f8e2c9b7a40";
+  const corporate = {
+    candidate_id: id,
+    brand_name: "ZZ Chain Tea",
+    corporate_tier: 1,
+    parent_entity: "Example Partners (majority)",
+    financial_backers: "Example Partners; Example Capital, Example Partners",
+    ownership_source_type: "investor_press_release",
+    ownership_source_url: "https://example.com/deal",
+  };
+
+  test("a PE/VC brand needs a tier 1 or 2, an owner and corporate-record evidence", () => {
+    expect(validate_add_corporate_brand(corporate)).toMatchObject({
+      valid: true,
+      input: { corporate_tier: 1, financial_backers: ["Example Partners", "Example Capital"] },
+    });
+    for (const broken of [
+      { corporate_tier: 3 },
+      { parent_entity: " " },
+      { ownership_source_type: "community_consensus" },
+      { ownership_source_url: "not a link" },
+      { financial_backers: [1, 2] },
+    ]) {
+      expect(validate_add_corporate_brand({ ...corporate, ...broken })).toMatchObject({ valid: false });
+    }
+    expect(validate_reopen_storefronts({ candidate_ids: [id] })).toEqual({ valid: true, input: { candidate_ids: [id], note: null } });
+    expect(validate_reopen_storefronts({ candidate_ids: [] })).toMatchObject({ valid: false });
+  });
+
+  describe("database", () => {
+    let pool: Pool;
+    let market_id: string;
+    const SOURCE_B = "zz_test_chain_source";
+
+    const row = (record_id: string, name: string): StorefrontCandidateInput => ({
+      source: SOURCE_B,
+      source_record_id: record_id,
+      name,
+      address: `${record_id} Chain Lane, Manhattan, NY 10014`,
+      borough: "Manhattan",
+      category: "Coffee/Tea",
+      industry_vertical: "coffee_bakery",
+      latitude: 40.736,
+      longitude: -73.994,
+      matched_brand_id: null,
+      match_kind: "none",
+      source_updated_on: null,
+    });
+    const id_of = async (record_id: string) =>
+      (await pool.query<{ id: string }>("SELECT id FROM storefront_candidates WHERE source = $1 AND source_record_id = $2", [SOURCE_B, record_id])).rows[0]!.id;
+
+    async function cleanup(): Promise<void> {
+      await pool.query(
+        `DELETE FROM admin_audit_log
+          WHERE brand_id IN (SELECT id FROM brands WHERE name LIKE 'ZZ Chain%')
+             OR payload ->> 'storefront_candidate_id' IN (SELECT id::text FROM storefront_candidates WHERE source = $1)
+             OR payload ? 'storefront_candidate_ids'`,
+        [SOURCE_B],
+      );
+      await pool.query("DELETE FROM locations WHERE address LIKE '% Chain Lane, Manhattan, NY 10014'");
+      await pool.query("DELETE FROM storefront_candidates WHERE source = $1", [SOURCE_B]);
+      await pool.query("DELETE FROM brands WHERE name LIKE 'ZZ Chain%'");
+    }
+
+    beforeAll(async () => {
+      pool = new Pool({ connectionString: database_url, max: 2 });
+      market_id = await fetch_market_id(pool, "nyc");
+    });
+    beforeEach(cleanup);
+    afterAll(async () => {
+      await cleanup();
+      await pool.end();
+    });
+
+    test("adds the brand with its evidence and moves all its shops to chain matches, then approve all publishes them", async () => {
+      await upsert_storefront_candidates(pool, market_id, [row("1", "ZZ Chain Tea"), row("2", "ZZ Chain Tea"), row("3", "ZZ Chain Tea"), row("4", "ZZ Other")], 4);
+      const result = await add_corporate_brand(
+        admin,
+        {
+          candidate_id: await id_of("1"),
+          brand_name: "ZZ Chain Tea",
+          corporate_tier: 1,
+          parent_entity: "Example Partners (majority)",
+          financial_backers: ["Example Partners"],
+          ownership_source_type: "investor_press_release",
+          ownership_source_url: "https://example.com/deal",
+        },
+        pool,
+      );
+      expect(result.moved_to_chain_matches).toBe(3);
+
+      const brand = await pool.query(
+        "SELECT corporate_tier, parent_entity, financial_backers, ownership_source_type, ownership_source_url, home_market_id FROM brands WHERE id = $1",
+        [result.brand_id],
+      );
+      expect(brand.rows[0]).toEqual({
+        corporate_tier: 1,
+        parent_entity: "Example Partners (majority)",
+        financial_backers: ["Example Partners"],
+        ownership_source_type: "investor_press_release",
+        ownership_source_url: "https://example.com/deal",
+        home_market_id: null,
+      });
+      // Nothing is published until the storefronts are approved.
+      expect((await pool.query("SELECT count(*)::int AS n FROM locations WHERE brand_id = $1", [result.brand_id])).rows[0].n).toBe(0);
+
+      const queue = await fetch_storefront_queue(admin, "nyc", "zz chain", pool);
+      const group = queue.chains.find((chain) => chain.brand_id === result.brand_id);
+      expect(group?.candidates).toHaveLength(3);
+      expect(await approve_storefronts(admin, group!.candidates.map((candidate) => candidate.id), null, pool)).toBe(3);
+      expect((await pool.query("SELECT count(*)::int AS n FROM locations WHERE brand_id = $1", [result.brand_id])).rows[0].n).toBe(3);
+
+      const audit = await pool.query("SELECT payload FROM admin_audit_log WHERE action = 'add_corporate_brand' AND brand_id = $1", [result.brand_id]);
+      expect(audit.rows[0].payload).toMatchObject({ corporate_tier: 1, moved_to_chain_matches: 3, evidence_url: "https://example.com/deal" });
+    });
+
+    test("refuses an existing brand name and evidence that does not fit the tier", async () => {
+      await upsert_storefront_candidates(pool, market_id, [row("10", "Blank Street Coffee"), row("11", "ZZ Chain Two")], 2);
+      const base = {
+        corporate_tier: 2 as const,
+        parent_entity: "Somebody",
+        financial_backers: [],
+        ownership_source_type: "crunchbase" as const,
+        ownership_source_url: "https://example.com/x",
+      };
+      await expect(
+        add_corporate_brand(admin, { ...base, candidate_id: await id_of("10"), brand_name: "Blank Street Coffee" }, pool),
+      ).rejects.toMatchObject({ status: 409 });
+      await expect(
+        add_corporate_brand(admin, { ...base, candidate_id: await id_of("11"), brand_name: "ZZ Chain Two", ownership_source_type: "local_press" as never }, pool),
+      ).rejects.toMatchObject({ status: 422 });
+    });
+
+    test("rejections can be undone, and reopened shops match a brand added since", async () => {
+      await upsert_storefront_candidates(pool, market_id, [row("20", "ZZ Chain Late"), row("21", "ZZ Chain Late")], 2);
+      const ids = [await id_of("20"), await id_of("21")];
+      await reject_storefronts(admin, ids, "A chain we don't track", pool);
+
+      let queue = await fetch_storefront_queue(admin, "nyc", "zz chain late", pool);
+      expect(queue.rejected).toEqual([expect.objectContaining({ name: "ZZ Chain Late", reason: "A chain we don't track" })]);
+      expect(queue.rejected[0]?.candidates).toHaveLength(2);
+
+      // The brand is added later (e.g. through the brands import) ...
+      await pool.query(
+        `INSERT INTO brands (name, corporate_tier, industry_vertical, parent_entity, ownership_source_type, ownership_source_url, ownership_verified_on)
+         VALUES ('ZZ Chain Late', 1, 'coffee_bakery', 'Late Capital', 'sec_edgar', 'https://www.sec.gov/x', current_date)`,
+      );
+      // ... and reopening brings the shops back as chain matches for it.
+      expect(await reopen_storefronts(admin, ids, null, pool)).toBe(2);
+      queue = await fetch_storefront_queue(admin, "nyc", "zz chain late", pool);
+      expect(queue.rejected).toEqual([]);
+      expect(queue.chains.find((chain) => chain.brand_name === "ZZ Chain Late")?.candidates).toHaveLength(2);
+
+      // Only rejected shops can be reopened.
+      await expect(reopen_storefronts(admin, ids, null, pool)).rejects.toMatchObject({ status: 409 });
+      const audit = await pool.query("SELECT count(*)::int AS n FROM admin_audit_log WHERE action = 'reopen_storefront' AND payload -> 'storefront_candidate_ids' ? $1", [ids[0]]);
+      expect(audit.rows[0].n).toBe(1);
+    });
+
+    test("only admins can call the new routines", async () => {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SET LOCAL ROLE authenticated");
+        await client.query("SELECT set_config('request.jwt.claims', $1, true)", [JSON.stringify({ role: "authenticated", sub: LOCAL_DEV_ADMIN_ID })]);
+        await expect(client.query("SELECT reopen_storefront_candidates(ARRAY[gen_random_uuid()], NULL)")).rejects.toThrow(/not_admin/);
+        await client.query("ROLLBACK");
+        await client.query("BEGIN");
+        await client.query("SET LOCAL ROLE anon");
+        await expect(
+          client.query("SELECT * FROM add_corporate_brand_from_candidates(gen_random_uuid(), 'x', 1, 'y', '{}', 'sec_edgar', 'https://x.io')"),
+        ).rejects.toThrow(/permission denied/);
+        await client.query("ROLLBACK");
+      } finally {
+        await client.query("ROLLBACK").catch(() => undefined);
+        client.release();
+      }
+    });
   });
 });
