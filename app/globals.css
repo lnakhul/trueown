@@ -71,6 +71,11 @@
 .leaflet-container .leaflet-control-attribution a {
   color: #d4d4d8;
 }
+/* Light tile sources (the keyless OpenStreetMap default) are darkened to match the
+   theme. Applied to the tile layer only, so markers and popups keep their colors. */
+.trueown-tiles-darkened {
+  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.35);
+}
 /* SVG divIcon markers: drop Leaflet's default white box. */
 .leaflet-div-icon.trueown-marker {
   background: transparent;
