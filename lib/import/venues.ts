@@ -220,15 +220,20 @@ export function parse_venue_csv(text: string, today: Date = new Date()): VenuePa
 
     const latitude_text = cell("latitude");
     const longitude_text = cell("longitude");
+    if (!latitude_text && !longitude_text) {
+      fail("latitude and longitude are blank. Run `npm run db:geocode:venues -- <file>` to fill them from the address, review the result, then import the .geocoded.csv file.");
+    }
     const latitude = Number(latitude_text);
     const longitude = Number(longitude_text);
-    if (!DECIMAL_PATTERN.test(latitude_text) || Math.abs(latitude) > 90) {
+    if ((latitude_text || longitude_text) && (!DECIMAL_PATTERN.test(latitude_text) || Math.abs(latitude) > 90)) {
       fail("latitude must be a decimal between -90 and 90.");
     }
-    if (!DECIMAL_PATTERN.test(longitude_text) || Math.abs(longitude) > 180) {
+    if ((latitude_text || longitude_text) && (!DECIMAL_PATTERN.test(longitude_text) || Math.abs(longitude) > 180)) {
       fail("longitude must be a decimal between -180 and 180.");
     }
-    if (latitude === 0 && longitude === 0) fail("coordinates 0,0 are a geocoder failure, not a location.");
+    if (latitude_text && longitude_text && latitude === 0 && longitude === 0) {
+      fail("coordinates 0,0 are a geocoder failure, not a location.");
+    }
 
     if (row_errors.length > 0) {
       errors.push(...row_errors);
