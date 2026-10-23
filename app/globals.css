@@ -3,9 +3,13 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    color-scheme: dark;
+  }
+
   /* One consistent, high-contrast keyboard focus indicator for every control. */
   :focus-visible {
-    outline: 2px solid #18181b;
+    outline: 2px solid #fafafa;
     outline-offset: 2px;
   }
 
@@ -19,4 +23,56 @@
       scroll-behavior: auto !important;
     }
   }
+}
+
+@layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Leaflet on dark tiles: dark popups, controls and attribution. */
+.leaflet-container {
+  background: #09090b;
+  font-family: inherit;
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #18181b;
+  color: #f4f4f5;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.08),
+    0 12px 24px -8px rgb(0 0 0 / 0.6);
+}
+.leaflet-popup-content {
+  margin: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  color: #a1a1aa;
+}
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  background: #18181b;
+  color: #e4e4e7;
+  border-bottom-color: rgb(255 255 255 / 0.08);
+}
+.leaflet-bar {
+  border: 1px solid rgb(255 255 255 / 0.08) !important;
+}
+.leaflet-container .leaflet-control-attribution {
+  background: rgb(9 9 11 / 0.75);
+  color: #a1a1aa;
+}
+.leaflet-container .leaflet-control-attribution a {
+  color: #d4d4d8;
+}
+/* SVG divIcon markers: drop Leaflet's default white box. */
+.leaflet-div-icon.trueown-marker {
+  background: transparent;
+  border: none;
 }

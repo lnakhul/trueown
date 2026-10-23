@@ -1,5 +1,6 @@
 import type { Pool as PgPool } from "pg";
 import { get_database_pool } from "@/lib/db/pool";
+import { estimate_walking_minutes } from "@/lib/proximity-format";
 import type {
   AlternativeRecommendation,
   CatalogResponse,
@@ -25,8 +26,6 @@ export const TARGET_MATCH_TOLERANCE_METERS = 50;
 export const MAX_RECOMMENDATIONS = 25;
 /** A market covers every point within 50 miles of its geographic center. */
 export const MARKET_RADIUS_METERS = 80_467;
-/** Standard average walking pace (~4.8 km/h) used for the display estimate only. */
-const WALKING_METERS_PER_MINUTE = 80;
 
 /**
  * Optional scope for discovery queries. null means "no restriction": a neighborhood
@@ -128,7 +127,7 @@ export function map_to_alternative(row: AlternativeRow): MappedAlternative {
     distance_meters,
     latitude: Number(row.latitude),
     longitude: Number(row.longitude),
-    walking_minutes: Math.max(1, Math.ceil(distance_meters / WALKING_METERS_PER_MINUTE)),
+    walking_minutes: estimate_walking_minutes(distance_meters),
     distance_label: `${distance_meters}m away`,
   };
 }
