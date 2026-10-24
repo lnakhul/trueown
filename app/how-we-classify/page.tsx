@@ -154,6 +154,22 @@ export default function HowWeClassifyPage() {
           Find the business on the map
         </Link>
       </section>
+
+      <section aria-labelledby="claim-heading" className="space-y-3 rounded-2xl bg-surface-card p-5 shadow-hairline">
+        <h2 id="claim-heading" className={section_heading}>
+          Own an independent business?
+        </h2>
+        <p className={body_text}>
+          Confirm that your café or bakery is independently owned. Once checked, your confirmation (linked to your website)
+          becomes the evidence on your listing.
+        </p>
+        <Link
+          href="/claim"
+          className="inline-flex min-h-11 items-center rounded-xl border border-hairline px-4 text-sm font-semibold text-zinc-100 hover:border-zinc-500"
+        >
+          Claim your business
+        </Link>
+      </section>
     </main>
   );
 }
