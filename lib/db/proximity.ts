@@ -63,7 +63,7 @@ export interface MappedAlternative extends AlternativeRecommendation {
   distance_label: string;
 }
 
-interface CorporateLocationRow {
+export interface CorporateLocationRow {
   location_id: string;
   brand_name: string;
   corporate_tier: number;
@@ -80,7 +80,7 @@ interface CorporateLocationRow {
   longitude: number;
 }
 
-interface AlternativeRow {
+export interface AlternativeRow {
   location_id: string;
   brand_name: string;
   address: string;
@@ -91,7 +91,7 @@ interface AlternativeRow {
   longitude: number;
 }
 
-const CORPORATE_LOCATION_COLUMNS = `
+export const CORPORATE_LOCATION_COLUMNS = `
   l.id AS location_id,
   b.name AS brand_name,
   b.corporate_tier,
@@ -107,7 +107,7 @@ const CORPORATE_LOCATION_COLUMNS = `
   ST_Y(l.coordinates) AS latitude,
   ST_X(l.coordinates) AS longitude`;
 
-function to_corporate_record(row: CorporateLocationRow): CorporateLocationRecord {
+export function to_corporate_record(row: CorporateLocationRow): CorporateLocationRecord {
   return {
     location_id: row.location_id,
     brand_name: row.brand_name,
@@ -263,7 +263,7 @@ export async function fetch_alternatives_for_corporate_address(
   return { target, alternatives };
 }
 
-interface CorporateCandidate {
+export interface CorporateCandidate {
   record: CorporateLocationRecord;
   distance_meters: number | null;
 }
@@ -286,7 +286,7 @@ function to_corporate_target(candidate: CorporateCandidate): CorporateTarget {
 }
 
 /** Pairs each corporate storefront with its own independents (each <= 1500m away). */
-async function attach_independent_alternatives(
+export async function attach_independent_alternatives(
   candidates: CorporateCandidate[],
   pool: Pool,
 ): Promise<NearbyCorporateResult[]> {

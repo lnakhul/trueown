@@ -14,12 +14,23 @@ import {
   fetch_nearest_corporate_discovery,
   fetch_neighborhood_suggestions,
 } from "@/lib/db/proximity";
+import {
+  drop_redundant_owners,
+  fetch_brand_discovery,
+  fetch_brand_suggestions,
+  fetch_owner_discovery,
+  fetch_owner_suggestions,
+  type CollectionDiscovery,
+  type SearchPoint,
+} from "@/lib/db/brand-search";
 import { parse_city, parse_vertical } from "@/lib/catalog";
 import { GeocoderUnavailableError, geocode_text, looks_like_street_address, type GeocodedPoint } from "@/lib/geocoding";
 import { record_proximity_search, type ProximitySearchType } from "@/lib/telemetry";
 import type {
   ApiErrorResponse,
+  BrandSuggestion,
   NearbyResponse,
+  OwnerSuggestion,
   NeighborhoodSuggestionsResponse,
   OutsideMarketResponse,
   ProximityResponse,
@@ -28,6 +39,7 @@ import type {
 export const dynamic = "force-dynamic";
 
 const MAX_TEXT_QUERY_LENGTH = 100;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type ProximityApiResponse =
   | ProximityResponse
@@ -49,6 +61,36 @@ function parse_text_query(raw_value: string): string | null {
   const trimmed_value = raw_value.trim();
   if (trimmed_value.length === 0 || trimmed_value.length > MAX_TEXT_QUERY_LENGTH) return null;
   return trimmed_value;
+}
+
+/**
+ * Optional visitor position for brand search and views: both or neither.
+ * Returns undefined when present but malformed.
+ */
+function parse_optional_point(search_params: URLSearchParams): SearchPoint | null | undefined {
+  const raw_latitude = search_params.get("lat");
+  const raw_longitude = search_params.get("lng");
+  if (raw_latitude === null && raw_longitude === null) return null;
+  const latitude = parse_coordinate(raw_latitude, -90, 90);
+  const longitude = parse_coordinate(raw_longitude, -180, 180);
+  if (latitude === null || longitude === null) return undefined;
+  return { latitude, longitude };
+}
+
+function collection_response<T extends BrandSuggestion | OwnerSuggestion>(
+  kind: "brand" | "owner",
+  discovery: CollectionDiscovery<T>,
+): NextResponse<NearbyResponse> {
+  const origin =
+    kind === "brand"
+      ? { kind: "brand" as const, brand: discovery.subject as BrandSuggestion, ...discovery.origin }
+      : { kind: "owner" as const, owner: discovery.subject as OwnerSuggestion, ...discovery.origin };
+  return NextResponse.json({
+    origin,
+    radius_meters: SEARCH_RADIUS_METERS,
+    results: discovery.results,
+    origin_alternatives: discovery.independent_locations,
+  });
 }
 
 /**
@@ -179,7 +221,10 @@ async function handle_text_search(
  * &vertical=<enum> is REQUIRED for scope=nearest and neighborhood= lookups; &city=<name> is optional.
  * Coordinate modes first resolve the nearest active market; outside 50 miles of every active
  * market the response is { status: "outside_active_market", closest_active_market, message }.
- *   ?suggest=<prefix>         neighborhood lookahead suggestions
+ *   ?suggest=<prefix>[&lat&lng] lookahead: neighborhoods, published brands (nearest first when
+ *                             lat/lng are given) and parent companies / backers
+ *   ?brand=<id>[&lat&lng]     every location of one brand (at most MAX_COLLECTION_LOCATIONS), nearest first
+ *   ?owner=<name>[&lat&lng]   every location of the corporate-backed brands an owner stands behind
  *   ?neighborhood=<text>      text search: a neighborhood name resolves to its polygon centroid; a
  *                             street address (or an unknown name) is geocoded server-side (cached 30
  *                             days). Then the standard 1500m Tier 3 search runs from that point.
@@ -200,11 +245,41 @@ export async function GET(
     if (prefix === null) {
       return error_response("Query parameter 'suggest' is invalid.", 400);
     }
+    const near = parse_optional_point(searchParams);
+    if (near === undefined) return error_response("Query parameters 'lat' and 'lng' must be valid coordinates.", 400);
     try {
-      const suggestions = await fetch_neighborhood_suggestions(prefix, undefined, filters.city);
-      return NextResponse.json({ suggestions });
+      const [suggestions, brands, owners] = await Promise.all([
+        fetch_neighborhood_suggestions(prefix, undefined, filters.city),
+        fetch_brand_suggestions(prefix, undefined, { city: filters.city, near }),
+        fetch_owner_suggestions(prefix, undefined, { city: filters.city }),
+      ]);
+      return NextResponse.json({ suggestions, brands, owners: drop_redundant_owners(owners, brands) });
     } catch (caught_error) {
       report_error("[proximity] suggestion lookup failed", caught_error);
+      return error_response("Unable to complete proximity lookup.", 500);
+    }
+  }
+
+  const raw_brand = searchParams.get("brand");
+  const raw_owner = searchParams.get("owner");
+  if (raw_brand !== null || raw_owner !== null) {
+    if (raw_brand !== null && raw_owner !== null) return error_response("Use either 'brand' or 'owner', not both.", 400);
+    const near = parse_optional_point(searchParams);
+    if (near === undefined) return error_response("Query parameters 'lat' and 'lng' must be valid coordinates.", 400);
+    try {
+      if (raw_brand !== null) {
+        if (!UUID_PATTERN.test(raw_brand)) return error_response("Query parameter 'brand' must be a brand id.", 400);
+        const discovery = await fetch_brand_discovery(raw_brand, undefined, { city: filters.city, near });
+        if (!discovery) return error_response("That brand has no locations on the map.", 404);
+        return collection_response("brand", discovery);
+      }
+      const owner = parse_text_query(raw_owner ?? "");
+      if (owner === null) return error_response("Query parameter 'owner' is invalid.", 400);
+      const discovery = await fetch_owner_discovery(owner, undefined, { city: filters.city, near });
+      if (!discovery) return error_response(`No corporate-backed brands on the map are owned or backed by '${owner}'.`, 404);
+      return collection_response("owner", discovery);
+    } catch (caught_error) {
+      report_error("[proximity] brand/owner lookup failed", caught_error);
       return error_response("Unable to complete proximity lookup.", 500);
     }
   }

@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import CorrectionPanel, { type ReportedListing } from "@/components/CorrectionPanel";
 import SubmissionPanel from "@/components/SubmissionPanel";
-import type { AlternativeRecommendation } from "@/lib/types";
+import type { AlternativeRecommendation, NearbyResponse } from "@/lib/types";
+import { OWNERSHIP_TAG, summarize_names } from "@/lib/ui/ownership-labels";
 import AlternativesCarousel, { type ScrollRequest } from "./discovery/AlternativesCarousel";
 import CorporateProfileCard from "./discovery/CorporateProfileCard";
 import CorporateTargetList from "./discovery/CorporateTargetList";
@@ -13,7 +14,7 @@ import DiscoveryShell from "./discovery/DiscoveryShell";
 import FilterPills from "./discovery/FilterPills";
 import ProximitySheet from "./discovery/ProximitySheet";
 import SearchBar from "./discovery/SearchBar";
-import { LocateIcon, RefreshIcon, SearchIcon } from "./discovery/icons";
+import { BuildingIcon, LocateIcon, RefreshIcon, SearchIcon } from "./discovery/icons";
 import { use_discovery } from "./discovery/use-discovery";
 import { DESKTOP_MEDIA_QUERY, use_media_query } from "./discovery/use-media-query";
 
@@ -55,6 +56,51 @@ function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
+type CollectionView = Extract<NearbyResponse["origin"], { kind: "brand" } | { kind: "owner" }>;
+
+function as_collection(origin: NearbyResponse["origin"] | undefined): CollectionView | null {
+  return origin && (origin.kind === "brand" || origin.kind === "owner") ? origin : null;
+}
+
+/** "All 4 locations" or "The 10 nearest of 312 locations". */
+function describe_shown(shown: number, total: number, measured: boolean): string {
+  if (shown >= total) return total === 1 ? "1 location" : `All ${total} locations`;
+  return `${measured ? "The" : "First"} ${shown} ${measured ? "nearest " : ""}of ${total} locations`;
+}
+
+function CollectionHeading({ view, shown }: { view: CollectionView; shown: number }) {
+  const measured = view.anchor === "user";
+  if (view.kind === "brand") {
+    const { brand } = view;
+    return (
+      <div className="space-y-1">
+        <h2 className="text-base font-semibold text-zinc-50">{brand.name}</h2>
+        <p className="text-sm">
+          <span className={brand.corporate_tier === 3 ? "font-medium text-independent" : "font-medium text-corporate"}>
+            {OWNERSHIP_TAG[brand.corporate_tier]}
+          </span>
+          <span className="text-zinc-400"> · {describe_shown(shown, view.total_locations, measured)}</span>
+        </p>
+      </div>
+    );
+  }
+  const { owner } = view;
+  return (
+    <div className="space-y-1">
+      <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-50">
+        <BuildingIcon className="h-4 w-4 shrink-0 text-corporate" />
+        {owner.name}
+      </h2>
+      <p className="text-sm text-zinc-400">
+        Owns or backs {owner.brand_names.length === 1 ? "" : `${owner.brand_names.length} brands: `}
+        <span className="text-zinc-200">{summarize_names(owner.brand_names, 3)}</span>
+        {" · "}
+        {describe_shown(shown, view.total_locations, measured).toLowerCase()}
+      </p>
+    </div>
+  );
+}
+
 export default function DiscoveryDashboard() {
   const discovery = use_discovery();
   const {
@@ -76,6 +122,11 @@ export default function DiscoveryDashboard() {
     forget_recent_search,
     device_location,
     select_place,
+    select_brand,
+    select_owner,
+    select_recent,
+    brand_suggestions,
+    owner_suggestions,
     search_text,
     set_search_text,
     suggestions,
@@ -94,6 +145,7 @@ export default function DiscoveryDashboard() {
   const selected_target_id = selected_result?.target.location_id ?? null;
   const is_loading = mode === "locating" || fetch_state.status === "loading";
   const is_near_me = payload?.origin.kind === "coordinates";
+  const collection = as_collection(payload?.origin);
 
   // A new target (or result set) starts with no highlighted alternative.
   useEffect(() => {
@@ -137,6 +189,8 @@ export default function DiscoveryDashboard() {
 
   const origin_alternatives: AlternativeRecommendation[] = payload?.origin_alternatives ?? [];
   const show_origin_view = centroid_origin !== null && results.length === 0 && origin_alternatives.length > 0;
+  // An independent brand's own locations (no corporate storefronts in the view).
+  const independent_brand = collection?.kind === "brand" && collection.brand.corporate_tier === 3 ? collection : null;
   const independent_count = useMemo(() => {
     const ids = new Set<string>();
     for (const result of results) for (const alternative of result.alternatives) ids.add(alternative.location_id);
@@ -160,9 +214,14 @@ export default function DiscoveryDashboard() {
       search_text={search_text}
       set_search_text={set_search_text}
       suggestions={suggestions}
+      brands={brand_suggestions}
+      owners={owner_suggestions}
       recent_searches={recent_searches}
       popular_neighborhoods={popular_neighborhoods}
       on_select_place={select_place}
+      on_select_brand={select_brand}
+      on_select_owner={select_owner}
+      on_select_recent={select_recent}
       on_use_location={refresh_location}
       on_forget_recent={forget_recent_search}
       is_locating={mode === "locating"}
@@ -187,6 +246,17 @@ export default function DiscoveryDashboard() {
         </span>
         <button type="button" onClick={refresh_location} className={LINK_BUTTON} aria-label="Refresh my location">
           <RefreshIcon /> Refresh
+        </button>
+      </>
+    );
+  } else if (collection) {
+    status = (
+      <>
+        <span className="min-w-0 truncate py-2">
+          {collection.anchor === "user" ? "Nearest to you" : "Turn on location to sort by distance"}
+        </span>
+        <button type="button" onClick={refresh_location} className={`${LINK_BUTTON} shrink-0`}>
+          <LocateIcon className="h-3.5 w-3.5" /> Near me
         </button>
       </>
     );
@@ -323,9 +393,11 @@ export default function DiscoveryDashboard() {
         </p>
       )}
 
+      {collection && <CollectionHeading view={collection} shown={results.length || origin_alternatives.length} />}
+
       {results.length > 0 && (
         <div className="space-y-3">
-          <h2 className="text-sm text-zinc-400">
+          <h2 className={collection ? "sr-only" : "text-sm text-zinc-400"}>
             <span className="font-semibold text-zinc-50">{plural(results.length, "corporate-backed spot", "corporate-backed spots")}</span>
             {" "}
             {centroid_origin ? `around ${centroid_origin.name}` : "near you"}
@@ -336,6 +408,7 @@ export default function DiscoveryDashboard() {
             selected_index={selected_index}
             on_select={handle_select_target}
             opens_dialog={!is_desktop}
+            variant={collection?.kind ?? "nearby"}
           />
         </div>
       )}
@@ -354,6 +427,21 @@ export default function DiscoveryDashboard() {
             layout="inline"
           />
         </div>
+      )}
+
+      {independent_brand && (
+        <AlternativesCarousel
+          heading={`${independent_brand.brand.name} is independently owned. ${
+            origin_alternatives.length === 1 ? "Support them here." : "Support them at any of these locations."
+          }`}
+          heading_id="brand-locations-heading"
+          alternatives={origin_alternatives}
+          active_alternative_id={active_alternative_id}
+          on_activate={set_active_alternative_id}
+          scroll_request={scroll_request}
+          layout={is_desktop ? "inline" : "sheet"}
+          show_distance={independent_brand.anchor === "user"}
+        />
       )}
 
       {/* A searched place with no corporate brands still lists the independents around it. */}

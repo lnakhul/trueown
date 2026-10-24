@@ -7,9 +7,17 @@ import {
   read_cached_discovery,
   write_cached_discovery,
 } from "@/lib/geolocation-cache";
-import { forget_search, get_recent_search_storage, read_recent_searches, remember_search } from "@/lib/recent-searches";
+import {
+  forget_search,
+  get_recent_search_storage,
+  read_recent_searches,
+  remember_search,
+  type RecentSearch,
+} from "@/lib/recent-searches";
 import type {
   ApiErrorResponse,
+  BrandSuggestion,
+  OwnerSuggestion,
   CatalogResponse,
   IndustryVertical,
   NearbyResponse,
@@ -48,7 +56,14 @@ const DEFAULT_SCOPE: DiscoveryScope = { vertical: "coffee_bakery", city: "" };
 /** Where the current results are anchored; filters are layered on top when requesting. */
 type DiscoveryOrigin =
   | { kind: "coordinates"; latitude: string; longitude: string }
-  | { kind: "neighborhood"; name: string };
+  | { kind: "neighborhood"; name: string }
+  | { kind: "brand"; brand_id: string }
+  | { kind: "owner"; name: string };
+
+interface DevicePoint {
+  latitude: number;
+  longitude: number;
+}
 
 function build_scope_params(scope: DiscoveryScope): string {
   const params = new URLSearchParams({ vertical: scope.vertical });
@@ -56,7 +71,21 @@ function build_scope_params(scope: DiscoveryScope): string {
   return `&${params.toString()}`;
 }
 
-function build_discovery_url(origin: DiscoveryOrigin, scope: DiscoveryScope): string {
+/** ~11m precision is plenty for discovery and limits what we transmit. */
+function point_params(point: DevicePoint | null): string {
+  return point ? `&lat=${point.latitude.toFixed(4)}&lng=${point.longitude.toFixed(4)}` : "";
+}
+
+/**
+ * Brand and owner views are measured from the visitor when their position is known.
+ * They ignore the business-type filter: a brand already has one.
+ */
+function build_discovery_url(origin: DiscoveryOrigin, scope: DiscoveryScope, near: DevicePoint | null = null): string {
+  if (origin.kind === "brand" || origin.kind === "owner") {
+    const subject = origin.kind === "brand" ? `brand=${origin.brand_id}` : `owner=${encodeURIComponent(origin.name)}`;
+    const city = scope.city ? `&city=${encodeURIComponent(scope.city)}` : "";
+    return `/api/proximity?${subject}${point_params(near)}${city}`;
+  }
   const base =
     origin.kind === "coordinates"
       ? `/api/proximity?scope=nearest&lat=${origin.latitude}&lng=${origin.longitude}`
@@ -114,11 +143,15 @@ export function use_discovery() {
   const [cached_at_ms, set_cached_at_ms] = useState<number | null>(null);
   const [selected_index, set_selected_index] = useState(0);
   const [popular_neighborhoods, set_popular_neighborhoods] = useState<string[]>([]);
-  const [recent_searches, set_recent_searches] = useState<string[]>([]);
+  const [recent_searches, set_recent_searches] = useState<RecentSearch[]>([]);
   /** The visitor's own position, for the "you are here" dot (never stored server-side). */
   const [device_location, set_device_location] = useState<{ latitude: number; longitude: number } | null>(null);
   const [search_text, set_search_text] = useState("");
   const [suggestions, set_suggestions] = useState<string[]>([]);
+  const [brand_suggestions, set_brand_suggestions] = useState<BrandSuggestion[]>([]);
+  const [owner_suggestions, set_owner_suggestions] = useState<OwnerSuggestion[]>([]);
+  // Read by the lookahead without re-running it when the position arrives.
+  const device_location_ref = useRef<DevicePoint | null>(null);
   const [catalog, set_catalog] = useState<CatalogResponse | null>(null);
   const [scope, set_scope] = useState<DiscoveryScope>(DEFAULT_SCOPE);
   // Mirrors `scope` so stable callbacks (e.g. the location request) always read the latest value.
@@ -219,11 +252,21 @@ export function use_discovery() {
     set_recent_searches(read_recent_searches(get_recent_search_storage()));
   }, []);
 
-  // Debounced server-side lookahead for the neighborhood text box.
+  useEffect(() => {
+    device_location_ref.current = device_location;
+  }, [device_location]);
+
+  function clear_suggestions(): void {
+    set_suggestions([]);
+    set_brand_suggestions([]);
+    set_owner_suggestions([]);
+  }
+
+  // Debounced server-side lookahead: neighborhoods, brands (nearest first) and owners.
   useEffect(() => {
     const prefix = search_text.trim();
     if (prefix.length === 0) {
-      set_suggestions([]);
+      clear_suggestions();
       return;
     }
     const abort_controller = new AbortController();
@@ -231,15 +274,17 @@ export function use_discovery() {
       try {
         const city_param = scope.city ? `&city=${encodeURIComponent(scope.city)}` : "";
         const response = await fetch(
-          `/api/proximity?suggest=${encodeURIComponent(prefix)}${city_param}`,
+          `/api/proximity?suggest=${encodeURIComponent(prefix)}${city_param}${point_params(device_location_ref.current)}`,
           { signal: abort_controller.signal },
         );
         if (!response.ok) throw new Error(await read_error_message(response));
         const payload = (await response.json()) as NeighborhoodSuggestionsResponse;
         set_suggestions(payload.suggestions);
+        set_brand_suggestions(payload.brands ?? []);
+        set_owner_suggestions(payload.owners ?? []);
       } catch {
         // Lookahead is a convenience; failures simply show no suggestions.
-        if (!abort_controller.signal.aborted) set_suggestions([]);
+        if (!abort_controller.signal.aborted) clear_suggestions();
       }
     }, SUGGESTION_DEBOUNCE_MS);
     return () => {
@@ -265,8 +310,10 @@ export function use_discovery() {
         }
 
         const storage = get_browser_storage();
-        // Only unscoped results are cached: the cache is restored without its scope.
-        if (storage && is_default_scope(scope_ref.current)) {
+        // Only unscoped place results are cached: the cache is restored without its scope,
+        // and brand or owner views are cheap to reopen from recent searches.
+        const is_place = payload.origin.kind !== "brand" && payload.origin.kind !== "owner";
+        if (storage && is_place && is_default_scope(scope_ref.current)) {
           write_cached_discovery(
             storage,
             payload.origin.kind === "coordinates" ? "device" : "neighborhood",
@@ -288,19 +335,41 @@ export function use_discovery() {
     return () => abort_controller.abort();
   }, [request_url]);
 
+  function open_search(recent: RecentSearch, origin: DiscoveryOrigin): void {
+    set_search_text(recent.label);
+    clear_suggestions();
+    set_cached_at_ms(null);
+    set_recent_searches(remember_search(get_recent_search_storage(), recent));
+    set_request_url(build_discovery_url(origin, scope_ref.current, device_location_ref.current));
+  }
+
   /** Searches a neighborhood name or a street address (the API geocodes addresses). */
   function select_place(place: string): void {
     const text = place.replace(/\s+/g, " ").trim();
     if (!text) return;
-    set_search_text(text);
-    set_suggestions([]);
-    set_cached_at_ms(null);
-    set_recent_searches(remember_search(get_recent_search_storage(), text));
-    set_request_url(build_discovery_url({ kind: "neighborhood", name: text }, scope_ref.current));
+    open_search({ kind: "place", label: text }, { kind: "neighborhood", name: text });
   }
 
-  function forget_recent_search(place: string): void {
-    set_recent_searches(forget_search(get_recent_search_storage(), place));
+  /** Every location of one brand, nearest to the visitor first. */
+  function select_brand(brand: { brand_id: string; name: string }): void {
+    open_search({ kind: "brand", label: brand.name, brand_id: brand.brand_id }, { kind: "brand", brand_id: brand.brand_id });
+  }
+
+  /** Every location of the corporate-backed brands an owner or backer stands behind. */
+  function select_owner(owner_name: string): void {
+    const name = owner_name.replace(/\s+/g, " ").trim();
+    if (!name) return;
+    open_search({ kind: "owner", label: name }, { kind: "owner", name });
+  }
+
+  function select_recent(recent: RecentSearch): void {
+    if (recent.kind === "brand") select_brand({ brand_id: recent.brand_id, name: recent.label });
+    else if (recent.kind === "owner") select_owner(recent.label);
+    else select_place(recent.label);
+  }
+
+  function forget_recent_search(recent: RecentSearch): void {
+    set_recent_searches(forget_search(get_recent_search_storage(), recent));
   }
 
   /** Changing city or vertical re-runs the current search with the new scope. */
@@ -314,18 +383,21 @@ export function use_discovery() {
 
     const current_origin = fetch_state.status === "success" ? fetch_state.payload.origin : null;
     if (current_origin === null) return;
-    set_request_url(
-      build_discovery_url(
-        current_origin.kind === "coordinates"
-          ? {
-              kind: "coordinates",
-              latitude: current_origin.latitude.toFixed(4),
-              longitude: current_origin.longitude.toFixed(4),
-            }
-          : { kind: "neighborhood", name: to_text_origin(current_origin)?.name ?? "" },
-        next_scope,
-      ),
-    );
+    let origin: DiscoveryOrigin;
+    if (current_origin.kind === "coordinates") {
+      origin = {
+        kind: "coordinates",
+        latitude: current_origin.latitude.toFixed(4),
+        longitude: current_origin.longitude.toFixed(4),
+      };
+    } else if (current_origin.kind === "brand") {
+      origin = { kind: "brand", brand_id: current_origin.brand.brand_id };
+    } else if (current_origin.kind === "owner") {
+      origin = { kind: "owner", name: current_origin.owner.name };
+    } else {
+      origin = { kind: "neighborhood", name: to_text_origin(current_origin)?.name ?? "" };
+    }
+    set_request_url(build_discovery_url(origin, next_scope, device_location_ref.current));
   }
 
   /** Drops the saved state and re-requests the device location. */
@@ -362,6 +434,11 @@ export function use_discovery() {
     forget_recent_search,
     device_location,
     select_place,
+    select_brand,
+    select_owner,
+    select_recent,
+    brand_suggestions,
+    owner_suggestions,
     search_text,
     set_search_text,
     suggestions,

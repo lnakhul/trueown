@@ -24,6 +24,8 @@ interface AlternativesCarouselProps {
   scroll_request: ScrollRequest | null;
   /** "sheet" makes each card nearly full-width for one-at-a-time swiping. */
   layout: "sheet" | "inline";
+  /** False when distances were not measured from the visitor. */
+  show_distance?: boolean;
 }
 
 /** Swipeable, scroll-snapping row of independent alternatives with page dots. */
@@ -35,6 +37,7 @@ export default function AlternativesCarousel({
   on_activate,
   scroll_request,
   layout,
+  show_distance = true,
 }: AlternativesCarouselProps) {
   const list_ref = useRef<HTMLUListElement>(null);
   const [page_index, set_page_index] = useState(0);
@@ -147,6 +150,7 @@ export default function AlternativesCarousel({
               alternative={alternative}
               is_active={alternative.location_id === active_alternative_id}
               on_activate={on_activate}
+              show_distance={show_distance}
             />
           </li>
         ))}
