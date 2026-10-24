@@ -1,18 +1,26 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { RecentSearch } from "@/lib/recent-searches";
+import type { BrandSuggestion, OwnerSuggestion } from "@/lib/types";
+import { OWNERSHIP_TAG, format_distance, summarize_names } from "@/lib/ui/ownership-labels";
 import { build_search_sections, flatten_sections, type SearchOption } from "@/lib/ui/search-options";
-import { ClockIcon, CloseIcon, LocateIcon, PinIcon, SearchIcon } from "./icons";
+import { BuildingIcon, ClockIcon, CloseIcon, LocateIcon, PinIcon, SearchIcon } from "./icons";
 
 interface SearchBarProps {
   search_text: string;
   set_search_text: (text: string) => void;
   suggestions: string[];
-  recent_searches: string[];
+  brands: BrandSuggestion[];
+  owners: OwnerSuggestion[];
+  recent_searches: RecentSearch[];
   popular_neighborhoods: string[];
   on_select_place: (place: string) => void;
+  on_select_brand: (brand: BrandSuggestion) => void;
+  on_select_owner: (owner_name: string) => void;
+  on_select_recent: (recent: RecentSearch) => void;
   on_use_location: () => void;
-  on_forget_recent: (place: string) => void;
+  on_forget_recent: (recent: RecentSearch) => void;
   /** Waiting for the device's position. */
   is_locating: boolean;
   /** Results are anchored on the device's position. */
@@ -21,15 +29,70 @@ interface SearchBarProps {
   input_id?: string;
 }
 
+/** Amber diamond for corporate-backed, green dot for independent: the same marks as the map. */
+function OwnershipMark({ tier }: { tier: 1 | 2 | 3 }) {
+  return tier === 3 ? (
+    <span aria-hidden="true" className="flex h-4 w-4 items-center justify-center">
+      <span className="h-2.5 w-2.5 rounded-full bg-independent" />
+    </span>
+  ) : (
+    <span aria-hidden="true" className="flex h-4 w-4 items-center justify-center">
+      <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-corporate" />
+    </span>
+  );
+}
+
 function OptionIcon({ option }: { option: SearchOption }) {
   if (option.kind === "location") return <LocateIcon className="h-4 w-4 text-independent" />;
-  if (option.kind === "recent") return <ClockIcon className="h-4 w-4 text-zinc-500" />;
+  if (option.kind === "recent") {
+    return option.recent.kind === "owner" ? (
+      <BuildingIcon className="h-4 w-4 text-zinc-500" />
+    ) : (
+      <ClockIcon className="h-4 w-4 text-zinc-500" />
+    );
+  }
+  if (option.kind === "brand") return <OwnershipMark tier={option.brand.corporate_tier} />;
+  if (option.kind === "owner") return <BuildingIcon className="h-4 w-4 text-corporate" />;
   if (option.kind === "free_text") return <SearchIcon className="h-4 w-4 text-zinc-500" />;
   return <PinIcon className="h-4 w-4 text-zinc-500" />;
 }
 
 function option_text(option: SearchOption): string {
   return option.kind === "free_text" ? `Search “${option.label}”` : option.label;
+}
+
+/** Second line: the ownership answer, right in the dropdown. */
+function OptionDetail({ option }: { option: SearchOption }) {
+  if (option.kind === "brand") {
+    const { brand } = option;
+    const where = [
+      `${brand.location_count} ${brand.location_count === 1 ? "location" : "locations"}`,
+      brand.nearest_distance_meters !== null ? `nearest ${format_distance(brand.nearest_distance_meters)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return (
+      <span className="block truncate text-xs">
+        <span className={brand.corporate_tier === 3 ? "text-independent" : "text-corporate"}>
+          {OWNERSHIP_TAG[brand.corporate_tier]}
+        </span>
+        <span className="text-zinc-500"> · {where}</span>
+      </span>
+    );
+  }
+  if (option.kind === "owner") {
+    const { brand_names } = option.owner;
+    return (
+      <span className="block truncate text-xs text-zinc-500">
+        {brand_names.length === 1 ? "Owns or backs " : `Owns or backs ${brand_names.length} brands: `}
+        {summarize_names(brand_names)}
+      </span>
+    );
+  }
+  if (option.kind === "recent" && option.recent.kind !== "place") {
+    return <span className="block text-xs text-zinc-500">{option.recent.kind === "brand" ? "Brand" : "Owner or backer"}</span>;
+  }
+  return null;
 }
 
 /**
@@ -41,9 +104,14 @@ export default function SearchBar({
   search_text,
   set_search_text,
   suggestions,
+  brands,
+  owners,
   recent_searches,
   popular_neighborhoods,
   on_select_place,
+  on_select_brand,
+  on_select_owner,
+  on_select_recent,
   on_use_location,
   on_forget_recent,
   is_locating,
@@ -57,8 +125,16 @@ export default function SearchBar({
   const listbox_id = useId();
 
   const sections = useMemo(
-    () => build_search_sections({ text: search_text, suggestions, recents: recent_searches, popular: popular_neighborhoods }),
-    [search_text, suggestions, recent_searches, popular_neighborhoods],
+    () =>
+      build_search_sections({
+        text: search_text,
+        suggestions,
+        recents: recent_searches,
+        popular: popular_neighborhoods,
+        brands,
+        owners,
+      }),
+    [search_text, suggestions, recent_searches, popular_neighborhoods, brands, owners],
   );
   const options = useMemo(() => flatten_sections(sections), [sections]);
 
@@ -81,13 +157,12 @@ export default function SearchBar({
 
   function choose(option: SearchOption): void {
     set_is_open(false);
-    if (option.kind === "location") {
-      on_use_location();
-      input_ref.current?.blur();
-      return;
-    }
-    on_select_place(option.label);
     input_ref.current?.blur();
+    if (option.kind === "location") on_use_location();
+    else if (option.kind === "brand") on_select_brand(option.brand);
+    else if (option.kind === "owner") on_select_owner(option.owner.name);
+    else if (option.kind === "recent") on_select_recent(option.recent);
+    else on_select_place(option.label);
   }
 
   function handle_submit(event: FormEvent<HTMLFormElement>): void {
@@ -132,7 +207,7 @@ export default function SearchBar({
               id={input_id}
               type="search"
               role="combobox"
-              aria-label="Search a neighborhood or address"
+              aria-label="Search a brand, owner, neighborhood or address"
               aria-expanded={is_open}
               aria-controls={listbox_id}
               aria-autocomplete="list"
@@ -144,7 +219,7 @@ export default function SearchBar({
               }}
               onFocus={() => set_is_open(true)}
               onKeyDown={handle_keydown}
-              placeholder="Search a place"
+              placeholder="Search shops, places"
               maxLength={100}
               autoComplete="off"
               enterKeyHint="search"
@@ -186,7 +261,7 @@ export default function SearchBar({
 
       {is_open && (
         <div className="absolute inset-x-0 top-full z-40 mt-2 max-h-[min(60vh,28rem)] overflow-y-auto overscroll-contain rounded-2xl border border-hairline bg-surface-raised py-2 shadow-lift">
-          <div id={listbox_id} role="listbox" aria-label="Places">
+          <div id={listbox_id} role="listbox" aria-label="Search suggestions">
             {sections.map((section, section_index) => {
               const heading_id = `${listbox_id}-section-${section_index}`;
               return (
@@ -214,7 +289,10 @@ export default function SearchBar({
                         } ${option.kind === "location" ? "font-medium text-zinc-50" : "text-zinc-200"}`}
                       >
                         <OptionIcon option={option} />
-                        <span className="min-w-0 flex-1 truncate">{option_text(option)}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">{option_text(option)}</span>
+                          <OptionDetail option={option} />
+                        </span>
                       </div>
                     );
                   })}

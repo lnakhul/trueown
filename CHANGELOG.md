@@ -10,6 +10,17 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 - Business type and city filters are now compact pills under the search.
 - Desktop: search, filters and results sit in a left column beside a tall map. Picking a spot zooms the map to it, and "Show all on map" returns to the overview.
 - `GET /api/neighborhoods?popular=<1-12>` returns the neighborhoods with the most tracked storefronts.
+- **Brand and owner search:** typing in the search bar now also finds published brands and the companies behind them.
+  - Each brand row shows its ownership tag ("Venture capital funded", "Independent"…), its location count and the nearest distance.
+  - An owner or backer (a parent company or a named investor) lists the brands it owns or funds.
+  - Opening a brand shows its locations nearest you, each with its independent alternatives; an independent brand shows its own locations.
+  - Opening an owner shows every location of every brand it stands behind.
+  - Small typos still match ("blank stret").
+  - Only brands with a location in an active market appear, so unapproved storefronts never show.
+- Recent searches remember brands and owners as brands and owners. Older saved entries still read as places.
+- Distances over a kilometre read as "1.2 km".
+- `GET /api/proximity?suggest=` also returns `brands` and `owners`, and takes optional `lat`/`lng` to sort brands by distance. New `?brand=<id>` and `?owner=<name>` views (optional `lat`/`lng`, at most 10 locations).
+- Migration `20261031000000_11_brand_search.sql` installs `pg_trgm` for typo matching. Search still works without it, matching exact fragments only.
 
 ### Fixed
 - On phones the map drew over the report form: Leaflet's layers are now contained in the map (`isolation: isolate`), so they can never cover dialogs or the bottom sheet.

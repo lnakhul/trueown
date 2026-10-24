@@ -12,10 +12,11 @@ interface AlternativeCardProps {
   alternative: AlternativeRecommendation;
   is_active: boolean;
   on_activate: (location_id: string) => void;
+  show_distance?: boolean;
 }
 
 /** One independent (Tier 3) alternative with walking estimate and directions. */
-export default function AlternativeCard({ alternative, is_active, on_activate }: AlternativeCardProps) {
+export default function AlternativeCard({ alternative, is_active, on_activate, show_distance = true }: AlternativeCardProps) {
   return (
     <article
       onMouseEnter={() => on_activate(alternative.location_id)}
@@ -34,7 +35,7 @@ export default function AlternativeCard({ alternative, is_active, on_activate }:
             </p>
           </div>
         </div>
-        <ProximityBadge distance_meters={alternative.distance_meters} />
+        {show_distance && <ProximityBadge distance_meters={alternative.distance_meters} />}
         <p className="truncate text-xs text-zinc-500">
           {[alternative.address, alternative.neighborhood].filter(Boolean).join(" · ")}
         </p>

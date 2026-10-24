@@ -2,6 +2,7 @@
 
 import type { NearbyCorporateResult } from "@/lib/types";
 import { TIER_ALERT_LABEL } from "./CorporateProfileCard";
+import { format_distance } from "@/lib/ui/ownership-labels";
 import { ChevronRightIcon } from "./icons";
 
 interface CorporateTargetListProps {
@@ -10,6 +11,15 @@ interface CorporateTargetListProps {
   on_select: (index: number) => void;
   /** True when choosing a target opens the bottom sheet (below `md`). */
   opens_dialog: boolean;
+  /**
+   * nearby: brand name and ownership. brand: every card is the same brand, so the
+   * street leads. owner: brand name with its street.
+   */
+  variant?: "nearby" | "brand" | "owner";
+}
+
+function street_of(address: string): string {
+  return address.split(",")[0]?.trim() || address;
 }
 
 /** Tappable cards for each nearby corporate-backed storefront. */
@@ -18,6 +28,7 @@ export default function CorporateTargetList({
   selected_index,
   on_select,
   opens_dialog,
+  variant = "nearby",
 }: CorporateTargetListProps) {
   return (
     <nav aria-label="Nearby corporate locations">
@@ -45,15 +56,23 @@ export default function CorporateTargetList({
                 />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline justify-between gap-3">
-                    <span className="truncate font-semibold text-zinc-50">{target.brand_name}</span>
+                    <span className="truncate font-semibold text-zinc-50">
+                      {variant === "brand" ? street_of(target.address) : target.brand_name}
+                    </span>
                     {target.distance_meters !== null && (
-                      <span className="shrink-0 text-xs tabular-nums text-zinc-500">{target.distance_meters}m</span>
+                      <span className="shrink-0 text-xs tabular-nums text-zinc-500">{format_distance(target.distance_meters)}</span>
                     )}
                   </span>
                   <span className="mt-0.5 block truncate text-xs text-corporate/90">
-                    {TIER_ALERT_LABEL[target.corporate_tier]}
+                    {variant === "nearby" ? (
+                      TIER_ALERT_LABEL[target.corporate_tier]
+                    ) : (
+                      <span className="text-zinc-400">
+                        {variant === "brand" ? target.neighborhood : street_of(target.address)}
+                      </span>
+                    )}
                     <span className="text-zinc-500">
-                      {" · "}
+                      {variant === "brand" && !target.neighborhood ? "" : " · "}
                       {alternatives.length === 0
                         ? "no independents nearby yet"
                         : `${alternatives.length} independent ${alternatives.length === 1 ? "alternative" : "alternatives"}`}

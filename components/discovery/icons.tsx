@@ -125,3 +125,13 @@ export function RefreshIcon({ className = "h-3.5 w-3.5" }: IconProps) {
     </svg>
   );
 }
+
+/** An office building: parent companies and investors. */
+export function BuildingIcon({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} {...STROKE_PROPS}>
+      <rect x="5" y="3" width="14" height="18" rx="1.5" />
+      <path d="M9 7h1.5M13.5 7H15M9 11h1.5M13.5 11H15M9 15h1.5M13.5 15H15M10.5 21v-3h3v3" />
+    </svg>
+  );
+}
