@@ -327,8 +327,10 @@ describe("storefront queue (database)", () => {
       ],
       3,
     );
-    const queue = await fetch_storefront_queue(admin, "nyc", "zz ", pool);
-    expect(queue.counts).toEqual({ chains: 1, possible: 0, independents: 2, rejected: 0 });
+    // Search for the fixtures only: the database may also hold a real import.
+    const queue = await fetch_storefront_queue(admin, "nyc", "zz indie twins", pool);
+    expect(queue.counts).toEqual({ chains: 0, possible: 0, independents: 2, rejected: 0 });
+    expect((await fetch_storefront_queue(admin, "nyc", "zz shop 50", pool)).counts.chains).toBe(1);
     expect(queue.independents).toEqual([expect.objectContaining({ name: "ZZ Indie Twins", location_count: 2 })]);
     const by_brand = await fetch_storefront_queue(admin, "nyc", "blank street", pool);
     expect(by_brand.chains.find((group) => group.brand_id === blank_street_id)?.candidates.length).toBeGreaterThan(0);

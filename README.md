@@ -24,7 +24,8 @@ The schema is built to extend beyond coffee into restaurants, bars and retail, a
 - Admin vetting queue (Supabase Auth) to approve or reject tips
 - Admin brand review to re-verify stale claims and correct ownership changes, all audited
 - Public "How we classify" page and a "Report an error" flow for business owners, with an admin inbox
-- Storefront review queue fed by NYC Open Data: approve a chain's locations in one click, publish independents with evidence
+- Storefront review queue fed by NYC Open Data: approve a chain's locations in one click, publish independents with evidence (NY State registry leads)
+- "Claim your business" for independent owners, with an admin inbox
 - Row-level security on every table; provenance fields on brand ownership claims
 - Bulk CSV importers for brands, venues and neighborhood boundaries
 
@@ -82,6 +83,7 @@ npm run db:import:markets                          # markets from data/markets/*
 npm run db:import:boundaries                       # NYC NTA 2020 polygons (--market <slug> --download for other cities)
 npm run db:import:brands -- <brands.csv>           # brand-level rows
 npm run db:import:storefronts                      # NYC coffee/bakery shops from NYC Open Data -> admin review queue
+npm run db:match:registry                          # NY State registry leads for possible independents
 npm run db:geocode:venues -- <venues.csv>          # fill blank coordinates from addresses (review the output)
 npm run db:import:venues -- <venues.csv>           # brands + storefronts with provenance
 ```
