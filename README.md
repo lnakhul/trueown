@@ -26,6 +26,7 @@ The schema is built to extend beyond coffee into restaurants, bars and retail, a
 - Public "How we classify" page and a "Report an error" flow for business owners, with an admin inbox
 - Storefront review queue fed by NYC Open Data: approve a chain's locations in one click, publish independents with evidence (NY State registry leads)
 - "Claim your business" for independent owners, with an admin inbox
+- Public website: a page for every brand (`/brands/<name>`) and every owner or investor (`/owners/<name>`) with its ownership evidence, locations and nearby independents; a Brands directory filterable by ownership; About, Privacy and Terms pages; link previews and a sitemap for search engines
 - Weekly ownership-change watch: news (GDELT) and SEC filings that name a tracked brand next to an acquisition, investment or IPO go to an admin Alerts queue; one click updates the listing with the article as evidence
 - Row-level security on every table; provenance fields on brand ownership claims
 - Bulk CSV importers for brands, venues and neighborhood boundaries

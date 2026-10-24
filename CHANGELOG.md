@@ -5,6 +5,16 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 ## [Unreleased]
 
 ### Added
+- **The public website.** TrueOwn is now a complete site around the map:
+  - **Brand pages** (`/brands/<name>`): the ownership answer in one sentence, the owner and named investors (each linking to their own page), the evidence and when it was checked, every location on a map, and, for corporate-backed brands, independent alternatives within a short walk. Each page has a Share button, plus "Report an error" and (for independents) "Claim it".
+  - **Owner pages** (`/owners/<name>`) and an **Owners & backers** index: every brand a firm owns or funds.
+  - A **Brands directory** (`/brands`): A–Z, filterable by private equity, venture capital or independent, and searchable by brand or owner.
+  - **About, Privacy Policy and Terms of Use** pages. The policy describes what the app actually collects. *These are drafts: have them reviewed before launch.*
+  - A **site header and footer** on every page. On the map, the logo opens the site menu.
+  - **Link previews:** a card with the brand's name and ownership tag appears when a page is shared. Plus a **sitemap** and **robots.txt** for search engines, per-page titles, descriptions and canonical links, and a friendly 404 page.
+- The map links to the new pages: the details sheet has "Full ownership profile", and independent alternatives, brand views and owner views link to their pages.
+- Brand pages link to the map (`/?brand=<id>`, `/?owner=<name>`). The map opens that brand or owner, then sorts it by distance once the visitor shares their location.
+- Migration `20261102000000_13_brand_slugs.sql`: every brand gets a unique, readable web address (`brands.slug`), kept up to date when the name changes. A duplicate name gets a short suffix.
 - **Ownership-change alerts.**
   - `npm run db:watch:ownership` checks every brand on the map against:
     - worldwide news, via the GDELT open news index;
@@ -26,6 +36,7 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
   - the audited, admin-only `resolve_ownership_alert()`.
 
 ### Changed
+- In a brand or owner view on the map, "Sort by distance" now re-sorts that view instead of switching to everything near you.
 - The Brands page's re-verify and correction forms are now shared with the Alerts page (`components/AdminBrandForms.tsx`). They behave the same as before.
 - **Search-first home screen:** the long list of neighborhood chips is gone. The page now opens on a pinned search bar with a "use my location" button, and a full-width map below it. The map shows you (a blue dot), every corporate-backed spot nearby (amber) and every independent (green). Tapping a spot on the map or in the list opens its details. The app still asks for location on load. If location is off, the map rests on New York with a short note, "Try again", and a prompt to search.
 - Search panel: "Use my current location", your last five searches (kept only in your browser, and clearable), and six popular neighborhoods. While typing, it shows matching neighborhoods plus a free-text search for any address.
