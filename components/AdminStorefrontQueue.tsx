@@ -6,7 +6,9 @@ import { FormEvent, useState } from "react";
 import type {
   ChainGroup,
   IndependentGroup,
+  IndependentSort,
   PossibleMatch,
+  RegistrySuggestionView,
   RejectedGroup,
   StorefrontCandidate,
   StorefrontQueue,
@@ -241,6 +243,75 @@ function PossibleRow({ match }: { match: PossibleMatch }) {
   );
 }
 
+const REGISTRY_REASON: Record<RegistrySuggestionView["match_reason"], { label: string; classes: string }> = {
+  name_at_address: { label: "Strong: same name, registered at this address", classes: "bg-independent-muted text-independent" },
+  business_at_address: { label: "Likely: a food business registered at this address", classes: "bg-sky-400/10 text-sky-300" },
+  name_elsewhere: { label: "Name only: registered elsewhere in NYC, check it is the same business", classes: "bg-white/[0.06] text-zinc-300" },
+};
+
+/** The best New York State registry lead for one shop, with a one-click "add with this record". */
+function RegistryLead({ candidate, display_name }: { candidate: StorefrontCandidate; display_name: string }) {
+  const { is_busy, error_message, run } = use_action();
+  const [show_more, set_show_more] = useState(false);
+  const leads = candidate.registry ?? [];
+  if (leads.length === 0) return null;
+  const visible = show_more ? leads : leads.slice(0, 1);
+  return (
+    <div className="space-y-2 rounded-lg border border-hairline bg-surface-page p-3">
+      {visible.map((lead) => {
+        const reason = REGISTRY_REASON[lead.match_reason];
+        const out_of_state = lead.jurisdiction !== null && lead.jurisdiction !== "New York";
+        return (
+          <div key={lead.record_url} className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${reason.classes}`}>{reason.label}</span>
+              {out_of_state && (
+                <span className="rounded-full bg-corporate-muted px-2 py-0.5 text-xs font-semibold text-corporate">
+                  Registered in {lead.jurisdiction}: larger companies often are, check for outside owners
+                </span>
+              )}
+            </div>
+            <p className="text-zinc-200">
+              <span className="font-semibold">{lead.entity_name}</span>
+              <span className="text-zinc-500">
+                {lead.entity_type && ` · ${lead.entity_type.toLowerCase()}`}
+                {lead.filed_on && ` · filed ${lead.filed_on.slice(0, 4)}`}
+                {lead.entity_address && ` · ${lead.entity_address}`}
+              </span>{" "}
+              <a href={lead.record_url} target="_blank" rel="noopener noreferrer" className="text-xs text-sky-300 underline underline-offset-2">
+                state record
+              </a>
+            </p>
+            <button
+              type="button"
+              disabled={is_busy || candidate.latitude === null}
+              onClick={() =>
+                void run(() =>
+                  post("independent", {
+                    candidate_id: candidate.id,
+                    brand_name: display_name,
+                    ownership_source_type: "state_business_registry",
+                    ownership_source_url: lead.record_url,
+                  }),
+                )
+              }
+              className={lead.match_reason === "name_at_address" && !out_of_state ? primary_button : secondary_button}
+            >
+              {is_busy ? "Saving…" : `Add “${display_name}” as independent with this record`}
+            </button>
+          </div>
+        );
+      })}
+      {leads.length > 1 && (
+        <button type="button" onClick={() => set_show_more((open) => !open)} className="text-xs text-zinc-400 underline underline-offset-2">
+          {show_more ? "Show fewer leads" : `${leads.length - 1} more lead${leads.length > 2 ? "s" : ""}`}
+        </button>
+      )}
+      <ErrorLine message={error_message} />
+    </div>
+  );
+}
+
 /**
  * A chain the queue does not know yet, backed by private equity or venture capital:
  * create the brand with its evidence, then approve its storefronts under Chain matches.
@@ -363,6 +434,10 @@ function IndependentCard({ group }: { group: IndependentGroup }) {
   const [source_url, set_source_url] = useState("");
   const { is_busy, error_message, run } = use_action();
   const looks_like_chain = group.location_count >= 5;
+  const best_lead_candidate =
+    group.candidates
+      .filter((candidate) => (candidate.registry?.length ?? 0) > 0)
+      .sort((a, b) => (b.registry?.[0]?.score ?? 0) - (a.registry?.[0]?.score ?? 0))[0] ?? null;
 
   async function add(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -392,7 +467,20 @@ function IndependentCard({ group }: { group: IndependentGroup }) {
           </span>
         )}
       </div>
-      {group.location_count === 1 && group.candidates[0] && <CandidateLine candidate={group.candidates[0]} />}
+      {group.location_count === 1 && group.candidates[0] && (
+        <>
+          <CandidateLine candidate={group.candidates[0]} />
+          <RegistryLead candidate={group.candidates[0]} display_name={group.name} />
+        </>
+      )}
+      {group.location_count > 1 && best_lead_candidate && panel !== "list" && (
+        <div className="space-y-1">
+          <p className="text-xs text-zinc-500">
+            Best registry lead, for the location at {best_lead_candidate.address} (other locations under “Show locations”):
+          </p>
+          <RegistryLead candidate={best_lead_candidate} display_name={group.name} />
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -468,8 +556,9 @@ function IndependentCard({ group }: { group: IndependentGroup }) {
       {panel === "list" && (
         <ul className="divide-y divide-white/[0.06] border-t border-hairline">
           {group.candidates.map((candidate) => (
-            <li key={candidate.id} className="py-2">
+            <li key={candidate.id} className="space-y-2 py-2">
               <CandidateLine candidate={candidate} />
+              <RegistryLead candidate={candidate} display_name={group.name} />
             </li>
           ))}
         </ul>
@@ -527,10 +616,12 @@ export default function AdminStorefrontQueue({
   queue,
   view,
   search,
+  sort = "size",
 }: {
   queue: StorefrontQueue;
   view: StorefrontQueueView;
   search: string;
+  sort?: IndependentSort;
 }) {
   const tabs: { id: StorefrontQueueView; label: string }[] = [
     { id: "chains", label: `Chain matches (${queue.counts.chains})` },
@@ -606,8 +697,33 @@ export default function AdminStorefrontQueue({
           <Empty text="No possible independents left to review." />
         ) : (
           <>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-zinc-500">Order:</span>
+              {(
+                [
+                  ["size", "Most locations first"],
+                  ["registry", "Strongest registry matches first"],
+                ] as const
+              ).map(([value, label]) => (
+                <Link
+                  key={value}
+                  href={`/admin/storefronts?view=independents&sort=${value}${search ? `&q=${encodeURIComponent(search)}` : ""}`}
+                  aria-current={sort === value ? "true" : undefined}
+                  className={`inline-flex min-h-11 items-center rounded-full border px-3 text-sm ${
+                    sort === value ? "border-zinc-400 text-zinc-100" : "border-hairline text-zinc-400 hover:border-zinc-500"
+                  }`}
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
             <p className="text-sm text-zinc-400">
-              Shops that match no brand you track, grouped by name with the most locations first. Big groups are usually
+              Registry leads come from New York State&apos;s business registry (run{" "}
+              <code className="text-xs">npm run db:match:registry</code> to refresh them). A record shows a local business is
+              registered there, not that no investor is behind it: check before adding.
+            </p>
+            <p className="text-sm text-zinc-400">
+              Shops that match no brand you track, grouped by name. Big groups are usually
               chains you don&apos;t track yet. If a public source names a private equity or venture capital investor, use{" "}
               <span className="font-semibold text-zinc-200">Add as PE/VC-backed brand</span>; if it is a corporate chain
               that is not PE/VC-backed, reject it as &ldquo;A chain we don&apos;t track&rdquo; (you can reopen it later).
