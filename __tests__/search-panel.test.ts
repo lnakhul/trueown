@@ -86,6 +86,7 @@ describe("recent searches", () => {
 
 const BLANK_STREET: BrandSuggestion = {
   brand_id: BRAND_ID,
+  slug: "blank-street-coffee",
   name: "Blank Street Coffee",
   corporate_tier: 2,
   industry_vertical: "coffee_bakery",

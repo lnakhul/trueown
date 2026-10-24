@@ -141,7 +141,7 @@ describe("owner suggestions", () => {
 
   test("a single-brand parent of a listed brand is dropped; multi-brand owners stay", () => {
     const brands = [
-      { brand_id: "x", name: "Blank Street Coffee", corporate_tier: 2 as const, industry_vertical: "coffee_bakery" as const, location_count: 1, nearest_distance_meters: null },
+      { brand_id: "x", slug: "blank-street-coffee", name: "Blank Street Coffee", corporate_tier: 2 as const, industry_vertical: "coffee_bakery" as const, location_count: 1, nearest_distance_meters: null },
     ];
     expect(
       drop_redundant_owners(

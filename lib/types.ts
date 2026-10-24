@@ -34,6 +34,8 @@ export interface SelectedLocation {
 /** A corporate storefront surfaced by location or neighborhood discovery. */
 export interface CorporateTarget extends SelectedLocation {
   location_id: string;
+  /** The brand's public page: /brands/<brand_slug>. */
+  brand_slug: string;
   neighborhood: string | null;
   /** Straight-line meters from the user; null for neighborhood browsing. */
   distance_meters: number | null;
@@ -43,6 +45,8 @@ export interface CorporateTarget extends SelectedLocation {
 export interface AlternativeRecommendation {
   location_id: string;
   brand_name: string;
+  /** The brand's public page: /brands/<brand_slug>. */
+  brand_slug: string;
   address: string;
   neighborhood: string | null;
   unique_selling_proposition: string | null;
@@ -98,6 +102,8 @@ export interface CollectionOrigin {
 /** A published brand that matches the search text. */
 export interface BrandSuggestion {
   brand_id: string;
+  /** The brand's public page: /brands/<slug>. */
+  slug: string;
   name: string;
   corporate_tier: CorporateTier;
   industry_vertical: IndustryVertical;

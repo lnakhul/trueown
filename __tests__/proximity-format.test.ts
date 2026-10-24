@@ -45,6 +45,7 @@ describe("map_to_alternative", () => {
     const mapped = map_to_alternative({
       location_id: "loc",
       brand_name: "Corner Bakery",
+      brand_slug: "corner-bakery",
       address: "1 Main St",
       neighborhood: null,
       unique_selling_proposition: null,

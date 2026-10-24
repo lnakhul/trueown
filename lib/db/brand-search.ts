@@ -100,13 +100,14 @@ export async function fetch_brand_suggestions(
   const near = options.near ?? null;
   const result = await pool.query<{
     brand_id: string;
+    slug: string;
     name: string;
     corporate_tier: number;
     industry_vertical: IndustryVertical;
     location_count: number;
     nearest_distance_meters: number | null;
   }>(
-    `SELECT b.id AS brand_id, b.name, b.corporate_tier, b.industry_vertical,
+    `SELECT b.id AS brand_id, b.slug, b.name, b.corporate_tier, b.industry_vertical,
             count(l.id)::int AS location_count,
             CASE WHEN $3::float8 IS NULL THEN NULL
                  ELSE min(ST_Distance(l.coordinates::geography,
@@ -125,6 +126,7 @@ export async function fetch_brand_suggestions(
   );
   return result.rows.map((row) => ({
     brand_id: row.brand_id,
+    slug: row.slug,
     name: row.name,
     corporate_tier: row.corporate_tier as CorporateTier,
     industry_vertical: row.industry_vertical,
@@ -221,12 +223,13 @@ export async function fetch_brand_discovery(
   const city = options.city ?? null;
   const summary = await pool.query<{
     name: string;
+    slug: string;
     corporate_tier: number;
     industry_vertical: IndustryVertical;
     total: number;
     nearest: number | null;
   }>(
-    `SELECT b.name, b.corporate_tier, b.industry_vertical, count(l.id)::int AS total,
+    `SELECT b.name, b.slug, b.corporate_tier, b.industry_vertical, count(l.id)::int AS total,
             min(${distance_sql(near)}) AS nearest
        FROM brands b
        JOIN locations l ON l.brand_id = b.id
@@ -239,6 +242,7 @@ export async function fetch_brand_discovery(
   if (!row) return null;
   const subject: BrandSuggestion = {
     brand_id,
+    slug: row.slug,
     name: row.name,
     corporate_tier: row.corporate_tier as CorporateTier,
     industry_vertical: row.industry_vertical,
@@ -249,7 +253,7 @@ export async function fetch_brand_discovery(
 
   if (subject.corporate_tier === 3) {
     const locations = await pool.query<AlternativeRow>(
-      `SELECT l.id AS location_id, b.name AS brand_name, l.address, l.neighborhood,
+      `SELECT l.id AS location_id, b.name AS brand_name, b.slug AS brand_slug, l.address, l.neighborhood,
               b.unique_selling_proposition,
               COALESCE(${distance_sql(near)}, 0) AS distance_meters,
               ST_Y(l.coordinates) AS latitude, ST_X(l.coordinates) AS longitude
