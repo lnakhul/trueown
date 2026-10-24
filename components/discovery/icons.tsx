@@ -90,3 +90,38 @@ export function WalkingFigurePaths() {
     </g>
   );
 }
+
+export function ClockIcon({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} {...STROKE_PROPS}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+export function PinIcon({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} {...STROKE_PROPS}>
+      <path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" />
+      <circle cx="12" cy="10" r="2.4" />
+    </svg>
+  );
+}
+
+export function ChevronDownIcon({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} {...STROKE_PROPS}>
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+export function RefreshIcon({ className = "h-3.5 w-3.5" }: IconProps) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={className} {...STROKE_PROPS}>
+      <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+      <polyline points="20 4 20 9 15 9" />
+    </svg>
+  );
+}

@@ -475,6 +475,27 @@ export async function fetch_neighborhoods(
   return result.rows.map((row) => row.neighborhood);
 }
 
+export const MAX_POPULAR_NEIGHBORHOODS = 12;
+
+/** Neighborhoods with the most tracked storefronts, for the search panel's quick picks. */
+export async function fetch_popular_neighborhoods(
+  limit: number,
+  pool: Pool = get_database_pool(),
+  city: string | null = null,
+): Promise<string[]> {
+  const result = await pool.query<{ neighborhood: string }>(
+    `SELECT neighborhood
+       FROM locations
+      WHERE neighborhood IS NOT NULL
+        AND ($2::text IS NULL OR city = $2)
+      GROUP BY neighborhood
+      ORDER BY count(*) DESC, neighborhood
+      LIMIT $1`,
+    [Math.min(Math.max(limit, 1), MAX_POPULAR_NEIGHBORHOODS), city],
+  );
+  return result.rows.map((row) => row.neighborhood);
+}
+
 export const MAX_NEIGHBORHOOD_SUGGESTIONS = 8;
 
 export interface NeighborhoodCentroid {

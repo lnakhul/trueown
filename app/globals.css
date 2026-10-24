@@ -85,38 +85,90 @@
   border: none;
 }
 
-/* Discovery layout: stacked on phones (controls, map, results); at md the map
-   becomes a sticky right-hand column beside controls and results. */
+/* Discovery layout. Phones: sticky search header, filters, a full-bleed map, then
+   results. At md the map becomes a tall sticky right-hand column. */
 .discovery-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "controls" "map" "results";
-  gap: 1.5rem;
+  grid-template-areas: "header" "controls" "map" "results";
+  row-gap: 0;
+}
+.discovery-grid__header {
+  grid-area: header;
 }
 .discovery-grid__controls {
   grid-area: controls;
+  padding-bottom: 0.75rem;
 }
 .discovery-grid__map {
   grid-area: map;
+  margin-bottom: 1.25rem;
 }
 .discovery-grid__results {
   grid-area: results;
 }
 @media (min-width: 768px) {
   .discovery-grid {
-    grid-template-columns: minmax(0, 26rem) minmax(0, 1fr);
-    grid-template-rows: auto 1fr;
-    grid-template-areas: "controls map" "results map";
-    column-gap: 2rem;
+    grid-template-columns: minmax(0, 24rem) minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas: "header map" "controls map" "results map";
+    column-gap: 1.5rem;
+  }
+  .discovery-grid__header {
+    padding-bottom: 0.75rem;
+  }
+  .discovery-grid__controls {
+    padding-bottom: 1.25rem;
   }
   .discovery-grid__map {
     position: sticky;
     top: 1.5rem;
     align-self: start;
+    margin-bottom: 0;
   }
 }
 @media (min-width: 1024px) {
   .discovery-grid {
-    grid-template-columns: minmax(0, 30rem) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 28rem) minmax(0, 1fr);
   }
 }
+
+/* "You are here": a blue dot with a soft pulse (static when motion is reduced). */
+.trueown-user-dot {
+  position: relative;
+}
+.trueown-user-dot__core,
+.trueown-user-dot__pulse {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  border-radius: 9999px;
+}
+.trueown-user-dot__core {
+  width: 14px;
+  height: 14px;
+  background: #3b82f6;
+  border: 2.5px solid #fafafa;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
+}
+.trueown-user-dot__pulse {
+  width: 22px;
+  height: 22px;
+  background: rgb(59 130 246 / 0.35);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .trueown-user-dot__pulse {
+    animation: trueown-user-pulse 2s ease-out infinite;
+  }
+}
+@keyframes trueown-user-pulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
