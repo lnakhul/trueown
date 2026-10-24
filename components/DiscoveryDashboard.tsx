@@ -2,10 +2,9 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import CorrectionPanel, { type ReportedListing } from "@/components/CorrectionPanel";
-import SubmissionPanel from "@/components/SubmissionPanel";
 import type { AlternativeRecommendation, NearbyResponse } from "@/lib/types";
+import { slugify as owner_slug } from "@/lib/site";
 import { OWNERSHIP_TAG, summarize_names } from "@/lib/ui/ownership-labels";
 import AlternativesCarousel, { type ScrollRequest } from "./discovery/AlternativesCarousel";
 import CorporateProfileCard from "./discovery/CorporateProfileCard";
@@ -74,7 +73,11 @@ function CollectionHeading({ view, shown }: { view: CollectionView; shown: numbe
     const { brand } = view;
     return (
       <div className="space-y-1">
-        <h2 className="text-base font-semibold text-zinc-50">{brand.name}</h2>
+        <h2 className="text-base font-semibold text-zinc-50">
+          <a href={`/brands/${brand.slug}`} className="underline decoration-zinc-700 underline-offset-4 hover:decoration-zinc-300">
+            {brand.name}
+          </a>
+        </h2>
         <p className="text-sm">
           <span className={brand.corporate_tier === 3 ? "font-medium text-independent" : "font-medium text-corporate"}>
             {OWNERSHIP_TAG[brand.corporate_tier]}
@@ -89,7 +92,9 @@ function CollectionHeading({ view, shown }: { view: CollectionView; shown: numbe
     <div className="space-y-1">
       <h2 className="flex items-center gap-2 text-base font-semibold text-zinc-50">
         <BuildingIcon className="h-4 w-4 shrink-0 text-corporate" />
-        {owner.name}
+        <a href={`/owners/${owner_slug(owner.name)}`} className="underline decoration-zinc-700 underline-offset-4 hover:decoration-zinc-300">
+          {owner.name}
+        </a>
       </h2>
       <p className="text-sm text-zinc-400">
         Owns or backs {owner.brand_names.length === 1 ? "" : `${owner.brand_names.length} brands: `}
@@ -131,10 +136,10 @@ export default function DiscoveryDashboard() {
     set_search_text,
     suggestions,
     refresh_location,
+    sort_by_distance,
   } = discovery;
 
   const is_desktop = use_media_query(DESKTOP_MEDIA_QUERY);
-  const [is_panel_open, set_is_panel_open] = useState(false);
   const [reported_listing, set_reported_listing] = useState<ReportedListing | null>(null);
   const [is_sheet_open, set_is_sheet_open] = useState(false);
   /** A storefront the visitor picked; the map zooms to it. Null shows the overview. */
@@ -253,11 +258,17 @@ export default function DiscoveryDashboard() {
     status = (
       <>
         <span className="min-w-0 truncate py-2">
-          {collection.anchor === "user" ? "Nearest to you" : "Turn on location to sort by distance"}
+          {collection.anchor === "user" ? "Nearest to you" : mode === "locating" ? "Finding your location…" : "Not sorted by distance"}
         </span>
-        <button type="button" onClick={refresh_location} className={`${LINK_BUTTON} shrink-0`}>
-          <LocateIcon className="h-3.5 w-3.5" /> Near me
-        </button>
+        {collection.anchor === "user" ? (
+          <button type="button" onClick={refresh_location} className={`${LINK_BUTTON} shrink-0`}>
+            <LocateIcon className="h-3.5 w-3.5" /> All near me
+          </button>
+        ) : (
+          <button type="button" onClick={sort_by_distance} className={`${LINK_BUTTON} shrink-0`}>
+            <LocateIcon className="h-3.5 w-3.5" /> Sort by distance
+          </button>
+        )}
       </>
     );
   } else if (centroid_origin) {
@@ -459,27 +470,9 @@ export default function DiscoveryDashboard() {
     </div>
   );
 
-  const footer = (
-    <div className="flex flex-col items-center gap-3">
-      <button
-        type="button"
-        onClick={() => set_is_panel_open(true)}
-        className="min-h-11 rounded-xl bg-white/[0.04] px-5 py-3 text-sm font-semibold text-zinc-100 shadow-hairline transition-colors hover:bg-white/[0.08]"
-      >
-        Know of an ownership change? Submit a tip
-      </button>
-      <Link
-        href="/how-we-classify"
-        className="inline-flex min-h-11 items-center text-sm font-medium text-zinc-400 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-100"
-      >
-        How we classify businesses
-      </Link>
-    </div>
-  );
-
   return (
     <>
-      <DiscoveryShell search={search} controls={controls} map={map} results={results_view} footer={footer} />
+      <DiscoveryShell search={search} controls={controls} map={map} results={results_view} />
 
       {/* Phones: the selected profile and its alternatives open in a bottom sheet. */}
       {!is_desktop && selected_result && (
@@ -513,7 +506,6 @@ export default function DiscoveryDashboard() {
         </ProximitySheet>
       )}
 
-      <SubmissionPanel is_open={is_panel_open} on_close={() => set_is_panel_open(false)} />
       <CorrectionPanel listing={reported_listing} on_close={() => set_reported_listing(null)} />
     </>
   );

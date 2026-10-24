@@ -25,9 +25,6 @@ export default async function ClaimPage({ searchParams }: { searchParams: { loca
   return (
     <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-2xl space-y-8 px-4 pb-16 pt-8 outline-none sm:px-6">
       <div className="space-y-3">
-        <Link href="/" className="inline-flex min-h-11 items-center text-sm font-medium text-zinc-400 hover:text-zinc-100">
-          ← Back to the map
-        </Link>
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">Claim your business</h1>
         <p className="text-sm leading-relaxed text-zinc-300">
           Own an independent café, bakery or coffee roaster? Confirm it is independently owned, and we will show your

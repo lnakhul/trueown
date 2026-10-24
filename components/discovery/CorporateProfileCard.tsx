@@ -82,6 +82,12 @@ export default function CorporateProfileCard({ target, variant = "full", on_repo
           </dd>
         </dl>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline pt-2 text-xs">
+          <Link
+            href={`/brands/${target.brand_slug}`}
+            className="inline-flex min-h-11 items-center font-semibold text-zinc-100 underline decoration-zinc-600 underline-offset-2 hover:decoration-zinc-300"
+          >
+            Full ownership profile
+          </Link>
           {on_report_error && (
             <button
               type="button"

@@ -29,7 +29,11 @@ export default function AlternativeCard({ alternative, is_active, on_activate, s
         <div className="flex items-start gap-2">
           <span aria-hidden="true" className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-independent" />
           <div className="min-w-0">
-            <h4 className="font-semibold leading-snug text-zinc-50">{alternative.brand_name}</h4>
+            <h4 className="font-semibold leading-snug text-zinc-50">
+              <a href={`/brands/${alternative.brand_slug}`} className="hover:underline hover:decoration-zinc-500 hover:underline-offset-2">
+                {alternative.brand_name}
+              </a>
+            </h4>
             <p className="mt-0.5 line-clamp-2 text-sm text-zinc-400">
               {alternative.unique_selling_proposition ?? "Independently owned"}
             </p>
