@@ -41,7 +41,15 @@
 ## 5. Uptime monitoring
 Point a monitor (UptimeRobot, Better Stack, etc.) at `https://gettrueown.com/api/health`. It returns `200 {"status":"ok"}` when the app and database are healthy and `503` otherwise. Alert on non-200.
 
-## 6. Smoke test after each deploy
+## 6. Ownership-change watch (weekly)
+1. Apply `20261101000000_12_ownership_alerts.sql` to Supabase.
+2. In GitHub > Settings > Secrets and variables > Actions, add `WATCH_DATABASE_URL` (the session-pooler string) and `OWNERSHIP_WATCH_CONTACT` (a contact email; the SEC requires one in automated requests).
+3. The **Ownership watch** workflow runs every Monday, or by hand from the Actions tab (optionally with a brand limit). It checks every brand on the map, about 6 seconds per brand, because GDELT allows one request every 5 seconds. Brands checked in the last 6 days are skipped, so a run that stops early picks up where it left off.
+4. New finds appear on `/admin/alerts`. Without the secrets, the workflow does nothing.
+
+The first run looks back 3 months of news and 12 months of filings; later runs only look at what's new since the last check. To try it locally first: `npm run db:watch:ownership -- --dry-run --limit 5`.
+
+## 7. Smoke test after each deploy
 - `GET /api/health` returns 200.
 - Home page loads; searching "West Village" shows alternatives.
 - Submit a tip (Turnstile widget appears and the tip lands as `pending`).

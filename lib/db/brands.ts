@@ -40,7 +40,7 @@ export class BrandChangeRejectedError extends Error {
   }
 }
 
-function translate_brand_error(caught_error: unknown): never {
+export function translate_brand_error(caught_error: unknown): never {
   const message = caught_error instanceof Error ? caught_error.message : "";
   if (message.includes("not_admin") || message.includes("permission denied")) {
     throw new BrandChangeRejectedError("Admin role required.", 403);

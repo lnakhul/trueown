@@ -7,6 +7,7 @@ const ADMIN_SECTIONS = [
   { id: "storefronts", href: "/admin/storefronts", label: "Storefronts" },
   { id: "corrections", href: "/admin/corrections", label: "Error reports" },
   { id: "claims", href: "/admin/claims", label: "Owner claims" },
+  { id: "alerts", href: "/admin/alerts", label: "Alerts" },
 ] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]["id"];
@@ -28,13 +29,13 @@ export default function AdminHeader({ admin, current }: { admin: AdminIdentity; 
           </form>
         )}
       </div>
-      <nav aria-label="Admin sections" className="flex gap-1 border-b border-hairline">
+      <nav aria-label="Admin sections" className="flex gap-1 overflow-x-auto border-b border-hairline scrollbar-none">
         {ADMIN_SECTIONS.map((section) => (
           <Link
             key={section.id}
             href={section.href}
             aria-current={section.id === current ? "page" : undefined}
-            className={`-mb-px inline-flex min-h-11 items-center border-b-2 px-3 text-sm font-medium transition-colors ${
+            className={`-mb-px inline-flex min-h-11 shrink-0 items-center border-b-2 px-3 text-sm font-medium transition-colors ${
               section.id === current
                 ? "border-zinc-100 text-zinc-50"
                 : "border-transparent text-zinc-400 hover:text-zinc-200"

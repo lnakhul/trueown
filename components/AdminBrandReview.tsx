@@ -2,18 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
-import type { BrandForReview, BrandReviewFilter } from "@/lib/db/brands";
+import { useState } from "react";
 import {
-  SOURCE_TYPE_LABELS,
-  format_verified_month,
-  provenance_status,
-  source_type_label,
-  source_types_for_tier,
-  type OwnershipSourceType,
-  type ProvenanceStatus,
-} from "@/lib/provenance";
-import type { ApiErrorResponse, IndustryVertical } from "@/lib/types";
+  CorrectionForm,
+  ReverifyForm,
+  TIER_LABELS,
+  input_classes,
+  post_json,
+  type CorrectionBody,
+  type ReverifyBody,
+} from "@/components/AdminBrandForms";
+import type { BrandForReview, BrandReviewFilter } from "@/lib/db/brands";
+import { format_verified_month, provenance_status, source_type_label, type ProvenanceStatus } from "@/lib/provenance";
+import type { IndustryVertical } from "@/lib/types";
 
 const VERTICAL_LABELS: Record<IndustryVertical, string> = {
   coffee_bakery: "Coffee & Bakery",
@@ -21,12 +22,6 @@ const VERTICAL_LABELS: Record<IndustryVertical, string> = {
   bar_nightlife: "Bar & Nightlife",
   retail_boutique: "Retail Boutique",
   fitness_wellness: "Fitness & Wellness",
-};
-
-const TIER_LABELS: Record<1 | 2 | 3, string> = {
-  1: "Tier 1 · PE owned",
-  2: "Tier 2 · VC funded",
-  3: "Tier 3 · Independent",
 };
 
 const STATUS_BADGES: Record<ProvenanceStatus, { label: string; classes: string }> = {
@@ -42,115 +37,28 @@ const ACTION_LABELS: Record<string, string> = {
   correct: "Corrected",
 };
 
-const input_classes =
-  "w-full rounded-lg border border-hairline bg-surface-page px-3 py-2 text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-zinc-500";
-const label_classes = "text-xs font-medium text-zinc-400";
-
-async function post_json(url: string, body: unknown): Promise<string | null> {
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (response.ok) return null;
-    const failure = (await response.json().catch(() => null)) as ApiErrorResponse | null;
-    return failure?.error ?? `Request failed (${response.status}).`;
-  } catch {
-    return "Network error. Try again.";
-  }
-}
-
-function SourceTypeSelect({
-  corporate_tier,
-  value,
-  on_change,
-}: {
-  corporate_tier: 1 | 2 | 3;
-  value: string;
-  on_change: (value: OwnershipSourceType | "") => void;
-}) {
-  return (
-    <select
-      className={`${input_classes} mt-1`}
-      value={value}
-      onChange={(event) => on_change(event.target.value as OwnershipSourceType)}
-      required
-    >
-      <option value="" disabled>
-        Choose a source type…
-      </option>
-      {source_types_for_tier(corporate_tier).map((source_type) => (
-        <option key={source_type} value={source_type}>
-          {SOURCE_TYPE_LABELS[source_type]}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 type Panel = "none" | "reverify" | "correct";
 
 function BrandCard({ brand }: { brand: BrandForReview }) {
   const router = useRouter();
   const [panel, set_panel] = useState<Panel>("none");
-  const [is_busy, set_is_busy] = useState(false);
-  const [error_message, set_error_message] = useState<string | null>(null);
   const [saved_message, set_saved_message] = useState<string | null>(null);
-
-  // Re-verify fields (start from the current evidence, which is often just re-checked).
-  const fits_current = (source_types_for_tier(brand.corporate_tier) as readonly string[]).includes(
-    brand.source?.source_type ?? "",
-  );
-  const [reverify_type, set_reverify_type] = useState<string>(fits_current ? brand.source!.source_type : "");
-  const [reverify_url, set_reverify_url] = useState(brand.source?.source_url ?? "");
-
-  // Correction fields.
-  const [tier, set_tier] = useState<1 | 2 | 3>(brand.corporate_tier);
-  const [parent_entity, set_parent_entity] = useState(brand.parent_entity ?? "");
-  const [backers, set_backers] = useState(brand.financial_backers.join(", "));
-  const [correct_type, set_correct_type] = useState<string>("");
-  const [correct_url, set_correct_url] = useState("");
-  const [review_note, set_review_note] = useState("");
 
   const status = provenance_status(brand.source);
   const badge = STATUS_BADGES[status];
 
   function open_panel(next: Panel): void {
     set_panel((current) => (current === next ? "none" : next));
-    set_error_message(null);
     set_saved_message(null);
   }
 
-  function change_tier(next: 1 | 2 | 3): void {
-    set_tier(next);
-    if (!(source_types_for_tier(next) as readonly string[]).includes(correct_type)) set_correct_type("");
-  }
-
-  async function submit(event: FormEvent<HTMLFormElement>, action: "reverify" | "correct"): Promise<void> {
-    event.preventDefault();
-    set_is_busy(true);
-    set_error_message(null);
-    const body =
-      action === "reverify"
-        ? { ownership_source_type: reverify_type, ownership_source_url: reverify_url }
-        : {
-            corporate_tier: tier,
-            parent_entity: tier === 3 ? null : parent_entity,
-            financial_backers: tier === 3 ? [] : backers,
-            ownership_source_type: correct_type,
-            ownership_source_url: correct_url,
-            review_note,
-          };
+  async function save(action: "reverify" | "correct", body: ReverifyBody | CorrectionBody): Promise<string | null> {
     const failure = await post_json(`/api/admin/brands/${brand.id}/${action}`, body);
-    set_is_busy(false);
-    if (failure) {
-      set_error_message(failure);
-      return;
-    }
+    if (failure) return failure;
     set_panel("none");
     set_saved_message(action === "reverify" ? "Re-verified." : "Correction saved.");
     router.refresh();
+    return null;
   }
 
   return (
@@ -242,120 +150,29 @@ function BrandCard({ brand }: { brand: BrandForReview }) {
       </div>
 
       {panel === "reverify" && (
-        <form onSubmit={(event) => void submit(event, "reverify")} className="space-y-3 border-t border-hairline pt-4">
-          <p className="text-sm text-zinc-400">
-            The claim stays as is. Record the evidence you just checked; the verified date becomes today.
-          </p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className={label_classes}>
-              Source type
-              <SourceTypeSelect corporate_tier={brand.corporate_tier} value={reverify_type} on_change={set_reverify_type} />
-            </label>
-            <label className={label_classes}>
-              Evidence link
-              <input
-                className={`${input_classes} mt-1`}
-                type="url"
-                required
-                value={reverify_url}
-                onChange={(event) => set_reverify_url(event.target.value)}
-                placeholder="https://…"
-              />
-            </label>
-          </div>
-          <SubmitRow is_busy={is_busy} label="Save re-verification" error_message={error_message} />
-        </form>
+        <ReverifyForm
+          corporate_tier={brand.corporate_tier}
+          initial_source_type={brand.source?.source_type ?? ""}
+          initial_source_url={brand.source?.source_url ?? ""}
+          intro="The claim stays as is. Record the evidence you just checked; the verified date becomes today."
+          submit_label="Save re-verification"
+          on_submit={(body) => save("reverify", body)}
+        />
       )}
 
       {panel === "correct" && (
-        <form onSubmit={(event) => void submit(event, "correct")} className="space-y-3 border-t border-hairline pt-4">
-          <p className="text-sm text-zinc-400">
-            Use this when ownership changed (for example a PE exit or a new buyer). A correction needs new evidence
-            and a reason.
-          </p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className={label_classes}>
-              Corporate tier
-              <select
-                className={`${input_classes} mt-1`}
-                value={tier}
-                onChange={(event) => change_tier(Number(event.target.value) as 1 | 2 | 3)}
-              >
-                <option value={1}>Tier 1 — PE buyout</option>
-                <option value={2}>Tier 2 — VC / growth equity</option>
-                <option value={3}>Tier 3 — Independent</option>
-              </select>
-            </label>
-            <label className={label_classes}>
-              Parent entity {tier === 3 ? "(none for independents)" : ""}
-              <input
-                className={`${input_classes} mt-1 disabled:bg-zinc-900 disabled:text-zinc-600`}
-                value={tier === 3 ? "" : parent_entity}
-                onChange={(event) => set_parent_entity(event.target.value)}
-                disabled={tier === 3}
-                required={tier !== 3}
-                maxLength={200}
-              />
-            </label>
-            <label className={`${label_classes} sm:col-span-2`}>
-              Named backers, comma-separated {tier === 3 ? "(none for independents)" : "(only ones you can cite)"}
-              <input
-                className={`${input_classes} mt-1 disabled:bg-zinc-900 disabled:text-zinc-600`}
-                value={tier === 3 ? "" : backers}
-                onChange={(event) => set_backers(event.target.value)}
-                disabled={tier === 3}
-              />
-            </label>
-            <label className={label_classes}>
-              New source type
-              <SourceTypeSelect corporate_tier={tier} value={correct_type} on_change={set_correct_type} />
-            </label>
-            <label className={label_classes}>
-              New evidence link
-              <input
-                className={`${input_classes} mt-1`}
-                type="url"
-                required
-                value={correct_url}
-                onChange={(event) => set_correct_url(event.target.value)}
-                placeholder="https://…"
-              />
-            </label>
-            <label className={`${label_classes} sm:col-span-2`}>
-              Reason (kept in the audit log)
-              <input
-                className={`${input_classes} mt-1`}
-                required
-                maxLength={500}
-                value={review_note}
-                onChange={(event) => set_review_note(event.target.value)}
-                placeholder="e.g. Acquired by Example Capital in Sept 2026"
-              />
-            </label>
-          </div>
-          <SubmitRow is_busy={is_busy} label="Save correction" error_message={error_message} />
-        </form>
+        <CorrectionForm
+          initial={{
+            corporate_tier: brand.corporate_tier,
+            parent_entity: brand.parent_entity,
+            financial_backers: brand.financial_backers,
+          }}
+          intro="Use this when ownership changed (for example a PE exit or a new buyer). A correction needs new evidence and a reason."
+          submit_label="Save correction"
+          on_submit={(body) => save("correct", body)}
+        />
       )}
     </li>
-  );
-}
-
-function SubmitRow({ is_busy, label, error_message }: { is_busy: boolean; label: string; error_message: string | null }) {
-  return (
-    <>
-      {error_message && (
-        <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">
-          {error_message}
-        </p>
-      )}
-      <button
-        type="submit"
-        disabled={is_busy}
-        className="min-h-11 rounded-lg bg-independent px-4 py-2.5 text-sm font-semibold text-zinc-950 transition-colors hover:bg-emerald-300 disabled:cursor-wait disabled:bg-zinc-800"
-      >
-        {is_busy ? "Saving…" : label}
-      </button>
-    </>
   );
 }
 
