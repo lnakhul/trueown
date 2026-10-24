@@ -70,7 +70,11 @@ export interface NearbyResponse {
     | { kind: "coordinates"; latitude: number; longitude: number }
     | { kind: "neighborhood"; neighborhood: string; latitude: number; longitude: number }
     /** A street address resolved by the geocoder; `label` is the text the user typed. */
-    | { kind: "address"; label: string; latitude: number; longitude: number };
+    | { kind: "address"; label: string; latitude: number; longitude: number }
+    /** Every location of one brand (nearest to `anchor` first when it is the user). */
+    | ({ kind: "brand"; brand: BrandSuggestion } & CollectionOrigin)
+    /** Every corporate-backed location whose parent or a named backer is `owner`. */
+    | ({ kind: "owner"; owner: OwnerSuggestion } & CollectionOrigin);
   radius_meters: number;
   results: NearbyCorporateResult[];
   /**
@@ -78,6 +82,36 @@ export interface NearbyResponse {
    * Always empty for coordinate origins.
    */
   origin_alternatives: AlternativeRecommendation[];
+}
+
+/** Where a brand or owner view is measured from, and how much of it is shown. */
+export interface CollectionOrigin {
+  /** "user": distances are from the visitor; "none": no position was given, so distances are not meaningful. */
+  anchor: "user" | "none";
+  /** Map centre for the view: the visitor, or the first location shown. */
+  latitude: number;
+  longitude: number;
+  /** All matching locations in active markets; at most MAX_COLLECTION_LOCATIONS are returned. */
+  total_locations: number;
+}
+
+/** A published brand that matches the search text. */
+export interface BrandSuggestion {
+  brand_id: string;
+  name: string;
+  corporate_tier: CorporateTier;
+  industry_vertical: IndustryVertical;
+  /** Locations in active markets (within the city filter, when set). */
+  location_count: number;
+  /** Straight-line meters to the closest location when the visitor's position was given. */
+  nearest_distance_meters: number | null;
+}
+
+/** A parent company or named backer of at least one corporate-backed brand. */
+export interface OwnerSuggestion {
+  name: string;
+  /** The brands it owns or backs, alphabetical. */
+  brand_names: string[];
 }
 
 export type MarketStatus = "active" | "coming_soon";
@@ -113,7 +147,10 @@ export interface NeighborhoodsResponse {
 }
 
 export interface NeighborhoodSuggestionsResponse {
+  /** Neighborhood names. */
   suggestions: string[];
+  brands: BrandSuggestion[];
+  owners: OwnerSuggestion[];
 }
 
 export interface ApiErrorResponse {
