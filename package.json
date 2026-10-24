@@ -30,7 +30,8 @@
     "admin:grant": "tsx scripts/grant-admin.ts",
     "db:geocode:venues": "tsx scripts/geocode-venues.ts",
     "db:import:storefronts": "tsx scripts/import-storefronts.ts",
-    "db:match:registry": "tsx scripts/match-registry.ts"
+    "db:match:registry": "tsx scripts/match-registry.ts",
+    "db:watch:ownership": "tsx scripts/watch-ownership.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^11.8.0",
