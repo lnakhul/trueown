@@ -1,53 +1,65 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import CorrectionPanel, { type ReportedListing } from "@/components/CorrectionPanel";
 import SubmissionPanel from "@/components/SubmissionPanel";
-import { GEOLOCATION_CACHE_TTL_MS } from "@/lib/geolocation-cache";
 import type { AlternativeRecommendation } from "@/lib/types";
 import AlternativesCarousel, { type ScrollRequest } from "./discovery/AlternativesCarousel";
 import CorporateProfileCard from "./discovery/CorporateProfileCard";
 import CorporateTargetList from "./discovery/CorporateTargetList";
 import DiscoveryShell from "./discovery/DiscoveryShell";
-import NeighborhoodSearch from "./discovery/NeighborhoodSearch";
+import FilterPills from "./discovery/FilterPills";
 import ProximitySheet from "./discovery/ProximitySheet";
-import ScopeSelectors from "./discovery/ScopeSelectors";
-import { LocateIcon, StorefrontIcon } from "./discovery/icons";
-import { build_centroid_target, use_discovery } from "./discovery/use-discovery";
+import SearchBar from "./discovery/SearchBar";
+import { LocateIcon, RefreshIcon, SearchIcon } from "./discovery/icons";
+import { use_discovery } from "./discovery/use-discovery";
 import { DESKTOP_MEDIA_QUERY, use_media_query } from "./discovery/use-media-query";
 
-const MAP_HEIGHT_CLASSES = "h-56 w-full rounded-2xl sm:h-72 md:h-[calc(100vh-5.5rem)] md:max-h-[52rem]";
+const SEARCH_INPUT_ID = "discovery-search";
+const MAP_SIZE_CLASSES =
+  "h-[46vh] min-h-[18rem] max-h-[30rem] w-full md:h-[calc(100vh-3rem)] md:max-h-none md:rounded-2xl";
 
 /** Leaflet touches `window`, so the map must render client-side only. */
-const IndependentMap = dynamic(() => import("./IndependentMap"), {
+const DiscoveryMap = dynamic(() => import("./DiscoveryMap"), {
   ssr: false,
-  loading: () => <div className={`${MAP_HEIGHT_CLASSES} animate-pulse bg-surface-card`} />,
+  loading: () => <div className={`${MAP_SIZE_CLASSES} animate-pulse bg-surface-card`} />,
 });
 
 const LOCAL_ALTERNATIVES_HEADING =
   "Keep it local instead? Here are independent alternatives within a 5-minute walk.";
 
+const LINK_BUTTON =
+  "inline-flex min-h-11 items-center gap-1.5 font-semibold text-zinc-100 underline-offset-4 hover:underline";
+
 function MapLegend() {
   return (
-    <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-400" aria-label="Map legend">
-      <li className="flex items-center gap-2">
-        <span aria-hidden="true" className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-corporate" />
+    <ul
+      className="pointer-events-none absolute bottom-3 left-3 z-[500] flex gap-3 rounded-full bg-surface-page/80 px-3 py-1.5 text-xs text-zinc-300 shadow-hairline backdrop-blur"
+      aria-label="Map legend"
+    >
+      <li className="flex items-center gap-1.5">
+        <span aria-hidden="true" className="h-2 w-2 rotate-45 rounded-[1px] bg-corporate" />
         Corporate-backed
       </li>
-      <li className="flex items-center gap-2">
-        <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-independent" />
+      <li className="flex items-center gap-1.5">
+        <span aria-hidden="true" className="h-2 w-2 rounded-full bg-independent" />
         Independent
       </li>
     </ul>
   );
 }
 
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
 export default function DiscoveryDashboard() {
   const discovery = use_discovery();
   const {
     mode,
+    fallback_notice,
     fetch_state,
     payload,
     results,
@@ -59,7 +71,14 @@ export default function DiscoveryDashboard() {
     catalog,
     scope,
     apply_scope,
-    enter_fallback,
+    popular_neighborhoods,
+    recent_searches,
+    forget_recent_search,
+    device_location,
+    select_place,
+    search_text,
+    set_search_text,
+    suggestions,
     refresh_location,
   } = discovery;
 
@@ -67,10 +86,14 @@ export default function DiscoveryDashboard() {
   const [is_panel_open, set_is_panel_open] = useState(false);
   const [reported_listing, set_reported_listing] = useState<ReportedListing | null>(null);
   const [is_sheet_open, set_is_sheet_open] = useState(false);
+  /** A storefront the visitor picked; the map zooms to it. Null shows the overview. */
+  const [focused_target_id, set_focused_target_id] = useState<string | null>(null);
   const [active_alternative_id, set_active_alternative_id] = useState<string | null>(null);
   const [scroll_request, set_scroll_request] = useState<ScrollRequest | null>(null);
 
   const selected_target_id = selected_result?.target.location_id ?? null;
+  const is_loading = mode === "locating" || fetch_state.status === "loading";
+  const is_near_me = payload?.origin.kind === "coordinates";
 
   // A new target (or result set) starts with no highlighted alternative.
   useEffect(() => {
@@ -78,128 +101,202 @@ export default function DiscoveryDashboard() {
     set_scroll_request(null);
   }, [selected_target_id, payload]);
 
-  // New results, or growing into the desktop layout, retire the mobile sheet.
+  // New results, or growing into the desktop layout, return to the overview.
   useEffect(() => {
     set_is_sheet_open(false);
+    set_focused_target_id(null);
   }, [payload, is_desktop]);
 
   const handle_select_target = useCallback(
     (index: number) => {
       set_selected_index(index);
+      set_focused_target_id(results[index]?.target.location_id ?? null);
       if (!is_desktop) set_is_sheet_open(true);
     },
-    [is_desktop, set_selected_index],
+    [is_desktop, results, set_selected_index],
+  );
+
+  const handle_marker_target = useCallback(
+    (location_id: string) => {
+      const index = results.findIndex((result) => result.target.location_id === location_id);
+      if (index >= 0) handle_select_target(index);
+    },
+    [results, handle_select_target],
   );
 
   /** A marker tap highlights its card and scrolls the carousel to it. */
-  const handle_marker_select = useCallback((location_id: string) => {
+  const handle_marker_alternative = useCallback((location_id: string) => {
     set_active_alternative_id(location_id);
     set_scroll_request((previous) => ({ location_id, request_key: (previous?.request_key ?? 0) + 1 }));
   }, []);
 
-  const close_sheet = useCallback(() => set_is_sheet_open(false), []);
+  const close_sheet = useCallback(() => {
+    set_is_sheet_open(false);
+    set_focused_target_id(null);
+  }, []);
 
-  const centroid_alternatives: AlternativeRecommendation[] =
-    centroid_origin && results.length === 0 && payload ? payload.origin_alternatives : [];
-  const show_centroid_view = centroid_alternatives.length > 0 && centroid_origin !== null;
-  const carousel_layout = is_desktop ? "inline" : "sheet";
+  const origin_alternatives: AlternativeRecommendation[] = payload?.origin_alternatives ?? [];
+  const show_origin_view = centroid_origin !== null && results.length === 0 && origin_alternatives.length > 0;
+  const independent_count = useMemo(() => {
+    const ids = new Set<string>();
+    for (const result of results) for (const alternative of result.alternatives) ids.add(alternative.location_id);
+    for (const alternative of origin_alternatives) ids.add(alternative.location_id);
+    return ids.size;
+  }, [results, origin_alternatives]);
 
-  const map_props = selected_result
-    ? { target: selected_result.target, alternatives: selected_result.alternatives, target_kind: "corporate" as const }
-    : show_centroid_view && centroid_origin
-      ? { target: build_centroid_target(centroid_origin), alternatives: centroid_alternatives, target_kind: "origin" as const }
-      : null;
+  function report_error_for(target: { location_id: string; brand_name: string; address: string }): void {
+    set_reported_listing({ location_id: target.location_id, brand_name: target.brand_name, address: target.address });
+  }
+
+  function focus_search(): void {
+    document.getElementById(SEARCH_INPUT_ID)?.focus();
+  }
 
   /* ---------------------------------------------------------------------- */
 
+  const search = (
+    <SearchBar
+      input_id={SEARCH_INPUT_ID}
+      search_text={search_text}
+      set_search_text={set_search_text}
+      suggestions={suggestions}
+      recent_searches={recent_searches}
+      popular_neighborhoods={popular_neighborhoods}
+      on_select_place={select_place}
+      on_use_location={refresh_location}
+      on_forget_recent={forget_recent_search}
+      is_locating={mode === "locating"}
+      is_near_me={is_near_me}
+    />
+  );
+
+  let status: React.ReactNode = null;
+  if (is_loading && !payload) {
+    status = (
+      <span className="flex items-center gap-2 py-2">
+        <LocateIcon className="h-3.5 w-3.5 text-independent motion-safe:animate-pulse" />
+        {mode === "locating" ? "Finding your location…" : "Finding spots…"}
+      </span>
+    );
+  } else if (is_near_me) {
+    status = (
+      <>
+        <span className="flex items-center gap-2 py-2">
+          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_0_3px_rgb(59_130_246/0.25)]" />
+          Near you{cache_age_minutes !== null && cache_age_minutes > 0 ? ` · updated ${cache_age_minutes} min ago` : ""}
+        </span>
+        <button type="button" onClick={refresh_location} className={LINK_BUTTON} aria-label="Refresh my location">
+          <RefreshIcon /> Refresh
+        </button>
+      </>
+    );
+  } else if (centroid_origin) {
+    status = (
+      <>
+        <span className="min-w-0 truncate py-2">
+          Around <span className="font-medium text-zinc-100">{centroid_origin.name}</span>
+        </span>
+        <button type="button" onClick={refresh_location} className={`${LINK_BUTTON} shrink-0`}>
+          <LocateIcon className="h-3.5 w-3.5" /> Near me
+        </button>
+      </>
+    );
+  } else if (mode === "fallback" && fallback_notice) {
+    status = (
+      <>
+        <span className="py-2">{fallback_notice}</span>
+        <button type="button" onClick={refresh_location} className={LINK_BUTTON}>
+          Try again
+        </button>
+      </>
+    );
+  }
+
   const controls = (
     <>
-      {catalog && (catalog.cities.length > 0 || catalog.verticals.length > 0) && (
-        <ScopeSelectors catalog={catalog} scope={scope} on_change={apply_scope} />
-      )}
-
-      {mode === "locating" && (
-        <p
-          role="status"
-          className="flex items-center gap-3 rounded-2xl bg-surface-card px-4 py-3 text-sm text-zinc-300 shadow-hairline"
-        >
-          <LocateIcon className="h-4 w-4 shrink-0 text-zinc-400 motion-safe:animate-pulse" />
-          Finding corporate-backed spots near you… Please allow location access.
-        </p>
-      )}
-
-      {mode === "located" && (
-        <div className="flex flex-wrap items-center justify-between gap-x-4 text-sm text-zinc-400">
-          <span className="py-2">
-            {cache_age_minutes === null
-              ? "Showing results near your current location."
-              : `Showing saved results from ${cache_age_minutes} min ago (kept up to ${GEOLOCATION_CACHE_TTL_MS / 60_000} min).`}
-          </span>
-          <span className="flex flex-wrap gap-x-4">
-            {cache_age_minutes !== null && (
-              <button
-                type="button"
-                onClick={refresh_location}
-                className="inline-flex min-h-11 items-center font-semibold text-zinc-100 underline-offset-4 hover:underline"
-              >
-                Refresh my location
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => enter_fallback(null)}
-              className="inline-flex min-h-11 items-center font-semibold text-zinc-100 underline-offset-4 hover:underline"
-            >
-              Browse by neighborhood instead
-            </button>
-          </span>
+      <FilterPills catalog={catalog} scope={scope} on_change={apply_scope} />
+      {status && (
+        <div role="status" className="flex items-center justify-between gap-3 text-sm text-zinc-400">
+          {status}
         </div>
       )}
-
-      {mode === "fallback" && <NeighborhoodSearch {...discovery} />}
     </>
   );
 
-  const map = map_props ? (
-    <div>
-      <div role="region" aria-label="Map of nearby independent alternatives" className="overflow-hidden rounded-2xl shadow-hairline">
-        <IndependentMap
-          {...map_props}
-          active_alternative_id={active_alternative_id}
-          on_select_alternative={handle_marker_select}
-          className={MAP_HEIGHT_CLASSES}
-        />
-      </div>
-      <MapLegend />
-    </div>
-  ) : (
-    // Desktop keeps the map column's shape before results arrive; phones skip it.
-    <div
-      aria-hidden="true"
-      className={`hidden items-center justify-center bg-surface-card text-sm text-zinc-500 shadow-hairline md:flex ${MAP_HEIGHT_CLASSES}`}
-    >
-      <span className="flex items-center gap-2">
-        <StorefrontIcon /> The map appears once results load
-      </span>
+  const map = (
+    <div role="region" aria-label="Map of corporate-backed and independent spots" className="relative overflow-hidden md:rounded-2xl md:shadow-hairline">
+      <DiscoveryMap
+        results={results}
+        origin_alternatives={origin_alternatives}
+        search_origin={centroid_origin}
+        user_location={device_location}
+        focused_target_id={focused_target_id}
+        selected_target_id={focused_target_id ?? (is_desktop ? selected_target_id : null)}
+        active_alternative_id={active_alternative_id}
+        on_select_target={handle_marker_target}
+        on_select_alternative={handle_marker_alternative}
+        className={MAP_SIZE_CLASSES}
+      />
+      {is_loading && (
+        <p
+          role="status"
+          className="absolute left-1/2 top-3 z-[500] flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full bg-surface-page/85 px-4 py-2 text-sm font-medium text-zinc-100 shadow-lift backdrop-blur"
+        >
+          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-independent motion-safe:animate-ping" />
+          {mode === "locating" ? "Finding spots near you…" : "Finding spots…"}
+        </p>
+      )}
+      {focused_target_id && is_desktop && (
+        <button
+          type="button"
+          onClick={() => set_focused_target_id(null)}
+          className="absolute right-3 top-3 z-[500] inline-flex min-h-11 items-center rounded-full bg-surface-page/85 px-4 text-sm font-semibold text-zinc-100 shadow-lift backdrop-blur hover:bg-surface-raised"
+        >
+          Show all on map
+        </button>
+      )}
+      {(results.length > 0 || origin_alternatives.length > 0) && <MapLegend />}
     </div>
   );
 
+  const show_empty_state = !payload && !is_loading && fetch_state.status !== "outside_market" && fetch_state.status !== "error";
+
   const results_view = (
-    // Reserve vertical space so late-arriving results don't shift the layout (CLS).
-    <div className="min-h-[32rem] space-y-6">
-      {fetch_state.status === "loading" && (
-        <p className="text-sm text-zinc-400 motion-safe:animate-pulse" role="status">
-          Finding independent alternatives…
-        </p>
+    <div className="space-y-6">
+      {show_empty_state && (
+        <div className="rounded-2xl bg-surface-card px-5 py-6 shadow-hairline">
+          <p className="text-base font-semibold text-zinc-50">Who owns the shops around you?</p>
+          <p className="mt-1 text-sm text-zinc-400">
+            Share your location or search a neighborhood or address to see corporate-backed spots and the independents
+            nearby.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={refresh_location}
+              className="inline-flex min-h-11 items-center gap-2 rounded-full bg-zinc-50 px-5 text-sm font-semibold text-zinc-950 hover:bg-white"
+            >
+              <LocateIcon className="h-4 w-4" /> Use my location
+            </button>
+            <button
+              type="button"
+              onClick={focus_search}
+              className="inline-flex min-h-11 items-center gap-2 rounded-full bg-white/[0.06] px-5 text-sm font-semibold text-zinc-100 shadow-hairline hover:bg-white/[0.1]"
+            >
+              <SearchIcon className="h-4 w-4" /> Search instead
+            </button>
+          </div>
+        </div>
       )}
+
       {fetch_state.status === "outside_market" && (
         <div role="status" className="rounded-2xl bg-surface-card px-4 py-4 text-sm text-zinc-300 shadow-hairline">
-          <p className="font-medium text-zinc-50">TrueOwn isn&apos;t available at your location yet.</p>
+          <p className="font-medium text-zinc-50">TrueOwn isn&apos;t available here yet.</p>
           <p className="mt-1">
             {fetch_state.payload.closest_active_market
               ? `The closest active city is ${fetch_state.payload.closest_active_market.city_name}, about ${Math.round(
                   fetch_state.payload.closest_active_market.distance_meters / 1609.344,
-                ).toLocaleString()} miles away. Try a neighborhood there instead.`
+                ).toLocaleString()} miles away. Search a neighborhood there instead.`
               : "No cities are active yet."}
           </p>
         </div>
@@ -210,18 +307,29 @@ export default function DiscoveryDashboard() {
         </p>
       )}
 
-      {payload && results.length === 0 && payload.origin_alternatives.length === 0 && (
+      {fetch_state.status === "loading" && !payload && (
+        <ul aria-hidden="true" className="space-y-2">
+          {[0, 1, 2].map((key) => (
+            <li key={key} className="h-[4.5rem] animate-pulse rounded-2xl bg-surface-card" />
+          ))}
+        </ul>
+      )}
+
+      {payload && results.length === 0 && origin_alternatives.length === 0 && (
         <p className="rounded-2xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-zinc-400">
           {centroid_origin
-            ? `No tracked Tier 1 or Tier 2 brands, or independents, near ${centroid_origin.name} yet.`
-            : "No tracked corporate-backed brands near you yet. Try a neighborhood instead."}
+            ? `No tracked corporate-backed brands or independents near ${centroid_origin.name} yet.`
+            : "No tracked corporate-backed brands near you yet. Try searching a neighborhood."}
         </p>
       )}
 
       {results.length > 0 && (
         <div className="space-y-3">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-            Corporate-backed near {centroid_origin ? centroid_origin.name : "you"}
+          <h2 className="text-sm text-zinc-400">
+            <span className="font-semibold text-zinc-50">{plural(results.length, "corporate-backed spot", "corporate-backed spots")}</span>
+            {" "}
+            {centroid_origin ? `around ${centroid_origin.name}` : "near you"}
+            {independent_count > 0 && ` · ${plural(independent_count, "independent", "independents")} nearby`}
           </h2>
           <CorporateTargetList
             results={results}
@@ -243,29 +351,25 @@ export default function DiscoveryDashboard() {
             active_alternative_id={active_alternative_id}
             on_activate={set_active_alternative_id}
             scroll_request={scroll_request}
-            layout={carousel_layout}
+            layout="inline"
           />
         </div>
       )}
 
-      {/* Neighborhood with no corporate brands: still offer independents around its centre. */}
-      {show_centroid_view && centroid_origin && (
+      {/* A searched place with no corporate brands still lists the independents around it. */}
+      {show_origin_view && centroid_origin && (
         <AlternativesCarousel
           heading={`Independent spots within 1500m of ${centroid_origin.is_address ? "" : "the centre of "}${centroid_origin.name}.`}
-          heading_id="centroid-alternatives-heading"
-          alternatives={centroid_alternatives}
+          heading_id="origin-alternatives-heading"
+          alternatives={origin_alternatives}
           active_alternative_id={active_alternative_id}
           on_activate={set_active_alternative_id}
           scroll_request={scroll_request}
-          layout={carousel_layout}
+          layout={is_desktop ? "inline" : "sheet"}
         />
       )}
     </div>
   );
-
-  function report_error_for(target: { location_id: string; brand_name: string; address: string }): void {
-    set_reported_listing({ location_id: target.location_id, brand_name: target.brand_name, address: target.address });
-  }
 
   const footer = (
     <div className="flex flex-col items-center gap-3">
@@ -287,7 +391,7 @@ export default function DiscoveryDashboard() {
 
   return (
     <>
-      <DiscoveryShell controls={controls} map={map} results={results_view} footer={footer} />
+      <DiscoveryShell search={search} controls={controls} map={map} results={results_view} footer={footer} />
 
       {/* Phones: the selected profile and its alternatives open in a bottom sheet. */}
       {!is_desktop && selected_result && (

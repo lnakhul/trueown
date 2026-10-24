@@ -4,6 +4,13 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Changed
+- **Search-first home screen:** the long list of neighborhood chips is gone. The page now opens on a pinned search bar with a "use my location" button, and a full-width map below it. The map shows you (a blue dot), every corporate-backed spot nearby (amber) and every independent (green). Tapping a spot on the map or in the list opens its details. The app still asks for location on load. If location is off, the map rests on New York with a short note, "Try again", and a prompt to search.
+- Search panel: "Use my current location", your last five searches (kept only in your browser, and clearable), and six popular neighborhoods. While typing, it shows matching neighborhoods plus a free-text search for any address.
+- Business type and city filters are now compact pills under the search.
+- Desktop: search, filters and results sit in a left column beside a tall map. Picking a spot zooms the map to it, and "Show all on map" returns to the overview.
+- `GET /api/neighborhoods?popular=<1-12>` returns the neighborhoods with the most tracked storefronts.
+
 ### Fixed
 - On phones the map drew over the report form: Leaflet's layers are now contained in the map (`isolation: isolate`), so they can never cover dialogs or the bottom sheet.
 - The map showed "API KEY REQUIRED" tiles: CARTO's basemaps now require a key. The default is now keyless OpenStreetMap tiles darkened with a CSS filter (markers keep their colors), and any provider can be configured with `NEXT_PUBLIC_MAP_TILE_*`.

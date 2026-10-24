@@ -1,16 +1,16 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clear_cached_discovery,
   get_browser_storage,
   read_cached_discovery,
   write_cached_discovery,
 } from "@/lib/geolocation-cache";
+import { forget_search, get_recent_search_storage, read_recent_searches, remember_search } from "@/lib/recent-searches";
 import type {
   ApiErrorResponse,
   CatalogResponse,
-  CorporateTarget,
   IndustryVertical,
   NearbyResponse,
   NeighborhoodSuggestionsResponse,
@@ -18,7 +18,7 @@ import type {
   OutsideMarketResponse,
 } from "@/lib/types";
 
-/** locating: awaiting permission | located: using GPS | fallback: neighborhood menu. */
+/** locating: awaiting permission | located: using GPS | fallback: no device location (search instead). */
 export type DiscoveryMode = "locating" | "located" | "fallback";
 
 export type FetchState =
@@ -35,6 +35,7 @@ const GEOLOCATION_OPTIONS: PositionOptions = {
 };
 
 const SUGGESTION_DEBOUNCE_MS = 200;
+const POPULAR_NEIGHBORHOOD_COUNT = 6;
 
 /** The API requires a vertical; "" for city means every city. */
 export interface DiscoveryScope {
@@ -70,11 +71,11 @@ const is_default_scope = (scope: DiscoveryScope): boolean =>
 function describe_geolocation_failure(error: GeolocationPositionError): string {
   switch (error.code) {
     case error.PERMISSION_DENIED:
-      return "Location access was denied. Choose a neighborhood instead.";
+      return "Location is off for this site.";
     case error.TIMEOUT:
-      return "We couldn't get your location in time. Choose a neighborhood instead.";
+      return "We couldn't find your location in time.";
     default:
-      return "Your location is unavailable right now. Choose a neighborhood instead.";
+      return "Your location is unavailable right now.";
   }
 }
 
@@ -101,23 +102,6 @@ function to_text_origin(origin: NearbyResponse["origin"]): TextOrigin | null {
   return null;
 }
 
-/** Map anchor for a searched point (no corporate brand involved). */
-export function build_centroid_target(origin: TextOrigin): CorporateTarget {
-  return {
-    location_id: `centroid:${origin.name}`,
-    brand_name: origin.is_address ? origin.name : `${origin.name} (centre)`,
-    corporate_tier: 2,
-    parent_entity: "",
-    financial_backers: [],
-    ownership_source: null,
-    address: origin.name,
-    neighborhood: origin.is_address ? null : origin.name,
-    latitude: origin.latitude,
-    longitude: origin.longitude,
-    distance_meters: null,
-  };
-}
-
 /**
  * All discovery state and data fetching: device location (with the 15-minute cache),
  * neighborhood fallback and lookahead, city/vertical scope, and outside-market handling.
@@ -129,16 +113,16 @@ export function use_discovery() {
   const [fetch_state, set_fetch_state] = useState<FetchState>({ status: "idle" });
   const [cached_at_ms, set_cached_at_ms] = useState<number | null>(null);
   const [selected_index, set_selected_index] = useState(0);
-  const [neighborhoods, set_neighborhoods] = useState<string[]>([]);
-  const [neighborhoods_error, set_neighborhoods_error] = useState<string | null>(null);
-  const [active_neighborhood, set_active_neighborhood] = useState<string | null>(null);
+  const [popular_neighborhoods, set_popular_neighborhoods] = useState<string[]>([]);
+  const [recent_searches, set_recent_searches] = useState<string[]>([]);
+  /** The visitor's own position, for the "you are here" dot (never stored server-side). */
+  const [device_location, set_device_location] = useState<{ latitude: number; longitude: number } | null>(null);
   const [search_text, set_search_text] = useState("");
   const [suggestions, set_suggestions] = useState<string[]>([]);
   const [catalog, set_catalog] = useState<CatalogResponse | null>(null);
   const [scope, set_scope] = useState<DiscoveryScope>(DEFAULT_SCOPE);
   // Mirrors `scope` so stable callbacks (e.g. the location request) always read the latest value.
   const scope_ref = useRef<DiscoveryScope>(DEFAULT_SCOPE);
-  const [active_suggestion, set_active_suggestion] = useState(-1);
 
   const enter_fallback = useCallback((notice: string | null) => {
     set_mode("fallback");
@@ -146,12 +130,12 @@ export function use_discovery() {
     set_request_url(null);
     set_fetch_state({ status: "idle" });
     set_cached_at_ms(null);
-    set_active_neighborhood(null);
+    set_device_location(null);
   }, []);
 
   const request_device_location = useCallback(() => {
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      enter_fallback("Location isn't supported on this device. Choose a neighborhood instead.");
+      enter_fallback("Location isn't supported on this device.");
       return;
     }
     set_mode("locating");
@@ -163,7 +147,8 @@ export function use_discovery() {
         const latitude = position.coords.latitude.toFixed(4);
         const longitude = position.coords.longitude.toFixed(4);
         set_mode("located");
-        set_active_neighborhood(null);
+        set_search_text("");
+        set_device_location({ latitude: position.coords.latitude, longitude: position.coords.longitude });
         set_request_url(
           build_discovery_url({ kind: "coordinates", latitude, longitude }, scope_ref.current),
         );
@@ -182,9 +167,10 @@ export function use_discovery() {
     if (cached_state) {
       const { payload } = cached_state;
       set_mode(cached_state.source === "device" ? "located" : "fallback");
-      set_active_neighborhood(
-        to_text_origin(payload.origin)?.name ?? null,
-      );
+      set_search_text(to_text_origin(payload.origin)?.name ?? "");
+      if (payload.origin.kind === "coordinates") {
+        set_device_location({ latitude: payload.origin.latitude, longitude: payload.origin.longitude });
+      }
       set_cached_at_ms(cached_state.saved_at_ms);
       set_selected_index(0);
       set_fetch_state({ status: "success", payload });
@@ -209,27 +195,29 @@ export function use_discovery() {
     return () => abort_controller.abort();
   }, []);
 
-  // Load neighborhood options for the fallback menu (narrowed to the chosen city).
+  // Quick picks for the search panel: the neighborhoods with the most tracked storefronts.
   useEffect(() => {
     const abort_controller = new AbortController();
-    async function fetch_neighborhood_options(): Promise<void> {
+    async function fetch_popular(): Promise<void> {
       try {
-        const query = scope.city ? `?city=${encodeURIComponent(scope.city)}` : "";
-        const response = await fetch(`/api/neighborhoods${query}`, { signal: abort_controller.signal });
+        const city_param = scope.city ? `&city=${encodeURIComponent(scope.city)}` : "";
+        const response = await fetch(`/api/neighborhoods?popular=${POPULAR_NEIGHBORHOOD_COUNT}${city_param}`, {
+          signal: abort_controller.signal,
+        });
         if (!response.ok) throw new Error(await read_error_message(response));
-        const payload = (await response.json()) as NeighborhoodsResponse;
-        set_neighborhoods(payload.neighborhoods);
-        set_neighborhoods_error(null);
-      } catch (caught_error) {
-        if (abort_controller.signal.aborted) return;
-        set_neighborhoods_error(
-          caught_error instanceof Error ? caught_error.message : "Unable to load neighborhoods.",
-        );
+        set_popular_neighborhoods(((await response.json()) as NeighborhoodsResponse).neighborhoods);
+      } catch {
+        // Quick picks are a convenience; without them the panel shows location and recents.
+        if (!abort_controller.signal.aborted) set_popular_neighborhoods([]);
       }
     }
-    void fetch_neighborhood_options();
+    void fetch_popular();
     return () => abort_controller.abort();
   }, [scope.city]);
+
+  useEffect(() => {
+    set_recent_searches(read_recent_searches(get_recent_search_storage()));
+  }, []);
 
   // Debounced server-side lookahead for the neighborhood text box.
   useEffect(() => {
@@ -249,7 +237,6 @@ export function use_discovery() {
         if (!response.ok) throw new Error(await read_error_message(response));
         const payload = (await response.json()) as NeighborhoodSuggestionsResponse;
         set_suggestions(payload.suggestions);
-        set_active_suggestion(-1);
       } catch {
         // Lookahead is a convenience; failures simply show no suggestions.
         if (!abort_controller.signal.aborted) set_suggestions([]);
@@ -301,13 +288,19 @@ export function use_discovery() {
     return () => abort_controller.abort();
   }, [request_url]);
 
-  function select_neighborhood(neighborhood: string): void {
-    set_active_neighborhood(neighborhood);
-    set_search_text(neighborhood);
+  /** Searches a neighborhood name or a street address (the API geocodes addresses). */
+  function select_place(place: string): void {
+    const text = place.replace(/\s+/g, " ").trim();
+    if (!text) return;
+    set_search_text(text);
     set_suggestions([]);
-    set_active_suggestion(-1);
     set_cached_at_ms(null);
-    set_request_url(build_discovery_url({ kind: "neighborhood", name: neighborhood }, scope_ref.current));
+    set_recent_searches(remember_search(get_recent_search_storage(), text));
+    set_request_url(build_discovery_url({ kind: "neighborhood", name: text }, scope_ref.current));
+  }
+
+  function forget_recent_search(place: string): void {
+    set_recent_searches(forget_search(get_recent_search_storage(), place));
   }
 
   /** Changing city or vertical re-runs the current search with the new scope. */
@@ -335,31 +328,6 @@ export function use_discovery() {
     );
   }
 
-  function handle_search_submit(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const neighborhood = search_text.trim();
-    if (neighborhood.length > 0) select_neighborhood(neighborhood);
-  }
-
-  /** Combobox keyboard support: arrows move through suggestions, Enter picks, Escape closes. */
-  function handle_search_keydown(event: KeyboardEvent<HTMLInputElement>): void {
-    if (suggestions.length === 0) return;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      set_active_suggestion((index) => (index + 1) % suggestions.length);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      set_active_suggestion((index) => (index <= 0 ? suggestions.length - 1 : index - 1));
-    } else if (event.key === "Enter" && active_suggestion >= 0) {
-      event.preventDefault();
-      const chosen = suggestions[active_suggestion];
-      if (chosen) select_neighborhood(chosen);
-    } else if (event.key === "Escape") {
-      set_suggestions([]);
-      set_active_suggestion(-1);
-    }
-  }
-
   /** Drops the saved state and re-requests the device location. */
   function refresh_location(): void {
     const storage = get_browser_storage();
@@ -372,8 +340,6 @@ export function use_discovery() {
   const results = payload?.results ?? [];
   const selected_result = results[selected_index] ?? results[0];
   const centroid_origin = payload ? to_text_origin(payload.origin) : null;
-  const suggestions_visible =
-    suggestions.length > 0 && search_text.trim().toLowerCase() !== suggestions[0]?.toLowerCase();
   const cache_age_minutes =
     cached_at_ms === null ? null : Math.max(0, Math.floor((Date.now() - cached_at_ms) / 60_000));
 
@@ -391,17 +357,14 @@ export function use_discovery() {
     catalog,
     scope,
     apply_scope,
-    neighborhoods,
-    neighborhoods_error,
-    active_neighborhood,
-    select_neighborhood,
+    popular_neighborhoods,
+    recent_searches,
+    forget_recent_search,
+    device_location,
+    select_place,
     search_text,
     set_search_text,
     suggestions,
-    suggestions_visible,
-    active_suggestion,
-    handle_search_submit,
-    handle_search_keydown,
     enter_fallback,
     refresh_location,
   };
