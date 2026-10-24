@@ -45,6 +45,7 @@ export const NO_DISCOVERY_FILTERS: DiscoveryFilters = { industry_vertical: null,
 export interface CorporateLocationRecord {
   location_id: string;
   brand_name: string;
+  brand_slug: string;
   corporate_tier: 1 | 2;
   parent_entity: string;
   financial_backers: string[];
@@ -66,6 +67,7 @@ export interface MappedAlternative extends AlternativeRecommendation {
 export interface CorporateLocationRow {
   location_id: string;
   brand_name: string;
+  brand_slug: string;
   corporate_tier: number;
   parent_entity: string;
   financial_backers: string[] | null;
@@ -83,6 +85,7 @@ export interface CorporateLocationRow {
 export interface AlternativeRow {
   location_id: string;
   brand_name: string;
+  brand_slug: string;
   address: string;
   neighborhood: string | null;
   unique_selling_proposition: string | null;
@@ -94,6 +97,7 @@ export interface AlternativeRow {
 export const CORPORATE_LOCATION_COLUMNS = `
   l.id AS location_id,
   b.name AS brand_name,
+  b.slug AS brand_slug,
   b.corporate_tier,
   b.parent_entity,
   b.financial_backers,
@@ -111,6 +115,7 @@ export function to_corporate_record(row: CorporateLocationRow): CorporateLocatio
   return {
     location_id: row.location_id,
     brand_name: row.brand_name,
+    brand_slug: row.brand_slug,
     corporate_tier: row.corporate_tier as CorporateTier as 1 | 2,
     parent_entity: row.parent_entity,
     financial_backers: row.financial_backers ?? [],
@@ -137,6 +142,7 @@ export function map_to_alternative(row: AlternativeRow): MappedAlternative {
   return {
     location_id: row.location_id,
     brand_name: row.brand_name,
+    brand_slug: row.brand_slug,
     address: row.address,
     neighborhood: row.neighborhood,
     unique_selling_proposition: row.unique_selling_proposition,
@@ -220,6 +226,7 @@ export async function fetch_nearby_independent_alternatives(
   const result = await pool.query<AlternativeRow>(
     `SELECT l.id AS location_id,
             b.name AS brand_name,
+            b.slug AS brand_slug,
             l.address,
             l.neighborhood,
             b.unique_selling_proposition,
@@ -273,6 +280,7 @@ function to_corporate_target(candidate: CorporateCandidate): CorporateTarget {
   return {
     location_id: record.location_id,
     brand_name: record.brand_name,
+    brand_slug: record.brand_slug,
     corporate_tier: record.corporate_tier,
     parent_entity: record.parent_entity,
     financial_backers: record.financial_backers,

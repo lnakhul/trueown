@@ -166,9 +166,29 @@ export function use_discovery() {
     set_device_location(null);
   }, []);
 
+  /**
+   * A brand or owner view waiting for the device position: when it arrives, that
+   * view is re-sorted by distance instead of switching to "near me".
+   */
+  const pending_collection_ref = useRef<DiscoveryOrigin | null>(null);
+
+  /** Without a position, a brand or owner view stays on screen; anything else falls back to search. */
+  const handle_location_failure = useCallback(
+    (notice: string) => {
+      if (pending_collection_ref.current) {
+        pending_collection_ref.current = null;
+        set_mode("fallback");
+        set_fallback_notice(notice);
+        return;
+      }
+      enter_fallback(notice);
+    },
+    [enter_fallback],
+  );
+
   const request_device_location = useCallback(() => {
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-      enter_fallback("Location isn't supported on this device.");
+      handle_location_failure("Location isn't supported on this device.");
       return;
     }
     set_mode("locating");
@@ -179,21 +199,52 @@ export function use_discovery() {
         // ~11m precision is plenty for discovery and limits what we store/transmit.
         const latitude = position.coords.latitude.toFixed(4);
         const longitude = position.coords.longitude.toFixed(4);
+        const point = { latitude: position.coords.latitude, longitude: position.coords.longitude };
         set_mode("located");
+        set_device_location(point);
+        device_location_ref.current = point;
+        const collection = pending_collection_ref.current;
+        pending_collection_ref.current = null;
+        if (collection) {
+          set_request_url(build_discovery_url(collection, scope_ref.current, point));
+          return;
+        }
         set_search_text("");
-        set_device_location({ latitude: position.coords.latitude, longitude: position.coords.longitude });
         set_request_url(
           build_discovery_url({ kind: "coordinates", latitude, longitude }, scope_ref.current),
         );
       },
-      (geolocation_error) => enter_fallback(describe_geolocation_failure(geolocation_error)),
+      (geolocation_error) => handle_location_failure(describe_geolocation_failure(geolocation_error)),
       GEOLOCATION_OPTIONS,
     );
-  }, [enter_fallback]);
+  }, [handle_location_failure]);
 
   // On first load: serve a fresh (<15 min) cached result instantly, skipping the
   // permission prompt; otherwise ask the device for its location.
+  // Start-up runs once, even when React re-runs effects (Strict Mode in development).
+  const started_ref = useRef(false);
   useEffect(() => {
+    if (started_ref.current) return;
+    started_ref.current = true;
+    // Links from brand and owner pages (/?brand=<id>, /?owner=<name>) open that view,
+    // then sort it by distance once the visitor shares their location.
+    const params = new URLSearchParams(window.location.search);
+    const brand_id = params.get("brand");
+    const owner_name = params.get("owner")?.replace(/\s+/g, " ").trim().slice(0, 100);
+    const linked: DiscoveryOrigin | null =
+      brand_id && /^[0-9a-f-]{36}$/i.test(brand_id)
+        ? { kind: "brand", brand_id }
+        : owner_name
+          ? { kind: "owner", name: owner_name }
+          : null;
+    if (linked) {
+      window.history.replaceState(null, "", window.location.pathname);
+      pending_collection_ref.current = linked;
+      set_request_url(build_discovery_url(linked, scope_ref.current));
+      request_device_location();
+      return;
+    }
+
     const storage = get_browser_storage();
     const cached_state = storage ? read_cached_discovery(storage) : null;
 
@@ -320,6 +371,8 @@ export function use_discovery() {
             payload,
           );
         }
+        if (payload.origin.kind === "brand") set_search_text(payload.origin.brand.name);
+        else if (payload.origin.kind === "owner") set_search_text(payload.origin.owner.name);
         set_selected_index(0);
         set_fetch_state({ status: "success", payload });
       } catch (caught_error) {
@@ -400,6 +453,23 @@ export function use_discovery() {
     set_request_url(build_discovery_url(origin, next_scope, device_location_ref.current));
   }
 
+  /** Re-sorts the current brand or owner view by distance from the visitor. */
+  function sort_by_distance(): void {
+    const origin = fetch_state.status === "success" ? fetch_state.payload.origin : null;
+    if (!origin || (origin.kind !== "brand" && origin.kind !== "owner")) {
+      refresh_location();
+      return;
+    }
+    const collection: DiscoveryOrigin =
+      origin.kind === "brand" ? { kind: "brand", brand_id: origin.brand.brand_id } : { kind: "owner", name: origin.owner.name };
+    if (device_location_ref.current) {
+      set_request_url(build_discovery_url(collection, scope_ref.current, device_location_ref.current));
+      return;
+    }
+    pending_collection_ref.current = collection;
+    request_device_location();
+  }
+
   /** Drops the saved state and re-requests the device location. */
   function refresh_location(): void {
     const storage = get_browser_storage();
@@ -444,6 +514,7 @@ export function use_discovery() {
     suggestions,
     enter_fallback,
     refresh_location,
+    sort_by_distance,
   };
 }
 

@@ -2,12 +2,17 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "leaflet/dist/leaflet.css";
 import "./globals.css";
+import { SITE_NAME, SITE_URL } from "@/lib/site";
 
 const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "TrueOwn — Keep it local",
-  description: "See who really owns your neighborhood spots and find independent alternatives nearby.",
+  metadataBase: new URL(SITE_URL),
+  title: "TrueOwn — Who really owns the shops around you",
+  description: "See who really owns your neighborhood spots, private equity, venture capital or independent, and find independent alternatives nearby.",
+  applicationName: SITE_NAME,
+  openGraph: { type: "website", siteName: SITE_NAME, url: SITE_URL, locale: "en_US" },
+  twitter: { card: "summary_large_image" },
 };
 
 export const viewport: Viewport = {

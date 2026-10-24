@@ -65,9 +65,6 @@ export default function HowWeClassifyPage() {
   return (
     <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-3xl space-y-10 px-4 pb-16 pt-8 outline-none sm:px-6">
       <div className="space-y-3">
-        <Link href="/" className="inline-flex min-h-11 items-center text-sm font-medium text-zinc-400 hover:text-zinc-100">
-          ← Back to the map
-        </Link>
         <h1 className="text-3xl font-semibold tracking-tight text-zinc-50">How we classify</h1>
         <p className={body_text}>
           TrueOwn describes who owns or funds a business, based on public records. It is not a judgement of quality,
