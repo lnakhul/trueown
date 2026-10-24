@@ -6,6 +6,7 @@ const ADMIN_SECTIONS = [
   { id: "brands", href: "/admin/brands", label: "Brands" },
   { id: "storefronts", href: "/admin/storefronts", label: "Storefronts" },
   { id: "corrections", href: "/admin/corrections", label: "Error reports" },
+  { id: "claims", href: "/admin/claims", label: "Owner claims" },
 ] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number]["id"];

@@ -14,7 +14,22 @@ export interface StorefrontCandidate {
   category: string | null;
   latitude: number | null;
   longitude: number | null;
+  /** Possible legal owners from the state business registry (possible independents only), best first. */
+  registry?: RegistrySuggestionView[];
 }
+
+export interface RegistrySuggestionView {
+  entity_name: string;
+  entity_type: string | null;
+  jurisdiction: string | null;
+  filed_on: string | null;
+  entity_address: string | null;
+  match_reason: "name_at_address" | "business_at_address" | "name_elsewhere";
+  score: number;
+  record_url: string;
+}
+
+export type IndependentSort = "size" | "registry";
 
 export interface ChainGroup {
   brand_id: string;
@@ -117,7 +132,13 @@ export async function fetch_storefront_queue(
   market_slug: string,
   search: string | null = null,
   pool: Pool = get_database_pool(),
+  options: { independent_sort?: IndependentSort } = {},
 ): Promise<StorefrontQueue> {
+  // "registry": groups with the strongest registry match first (quickest to verify).
+  const group_order =
+    options.independent_sort === "registry"
+      ? "best_score DESC NULLS LAST, group_size DESC, group_key"
+      : "group_size DESC, group_key";
   const term = search?.trim().toLowerCase() || null;
   return with_admin_claims(
     admin.claims,
@@ -171,10 +192,11 @@ export async function fetch_storefront_queue(
               AND ($2::text IS NULL OR strpos(lower(c.name), $2) > 0 OR strpos(lower(c.address), $2) > 0)
          ),
          groups AS (
-           SELECT group_key, count(*)::int AS group_size
-             FROM unmatched
-            GROUP BY group_key
-            ORDER BY group_size DESC, group_key
+           SELECT u.group_key, count(DISTINCT u.id)::int AS group_size, max(rs.score) AS best_score
+             FROM unmatched u
+             LEFT JOIN registry_suggestions rs ON rs.candidate_id = u.id
+            GROUP BY u.group_key
+            ORDER BY ${group_order}
             LIMIT ${MAX_INDEPENDENT_GROUPS + 1}
          )
          SELECT u.id, u.name, u.address, u.borough, u.category, u.latitude, u.longitude,
@@ -182,7 +204,7 @@ export async function fetch_storefront_queue(
                 g.group_key AS group_name, g.group_size
            FROM unmatched u
            JOIN groups g ON g.group_key = u.group_key
-          ORDER BY g.group_size DESC, g.group_key, u.address`,
+          ORDER BY ${options.independent_sort === "registry" ? "g.best_score DESC NULLS LAST, " : ""}g.group_size DESC, g.group_key, u.address`,
         [market_slug, term],
       );
       const independents = new Map<string, IndependentGroup>();
@@ -192,6 +214,28 @@ export async function fetch_storefront_queue(
         independents.set(row.group_name, group);
       }
       const independent_groups = [...independents.values()];
+
+      // Registry leads for the shops on screen, best first (at most three each).
+      const shown_ids = independent_groups.slice(0, MAX_INDEPENDENT_GROUPS).flatMap((group) => group.candidates.map((candidate) => candidate.id));
+      if (shown_ids.length > 0) {
+        const suggestions = await client.query<RegistrySuggestionView & { candidate_id: string; filed_on: Date | string | null }>(
+          `SELECT candidate_id, entity_name, entity_type, jurisdiction, to_char(filed_on, 'YYYY-MM-DD') AS filed_on,
+                  entity_address, match_reason, score, record_url
+             FROM registry_suggestions
+            WHERE candidate_id = ANY ($1::uuid[])
+            ORDER BY candidate_id, score DESC, filed_on DESC NULLS LAST`,
+          [shown_ids],
+        );
+        const by_candidate = new Map<string, RegistrySuggestionView[]>();
+        for (const { candidate_id, ...suggestion } of suggestions.rows) {
+          const list = by_candidate.get(candidate_id) ?? [];
+          list.push({ ...suggestion, filed_on: suggestion.filed_on === null ? null : String(suggestion.filed_on) });
+          by_candidate.set(candidate_id, list);
+        }
+        for (const group of independent_groups) {
+          for (const candidate of group.candidates) candidate.registry = by_candidate.get(candidate.id) ?? [];
+        }
+      }
 
       const rejected_count = await client.query<{ total: number }>(
         `SELECT count(*)::int AS total

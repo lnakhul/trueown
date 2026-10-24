@@ -17,6 +17,8 @@ export const INDEPENDENT_SOURCE_TYPES = [
   "state_business_registry",
   "local_press",
   "community_consensus",
+  // The owner confirmed it through "Claim your business"; the link is the business's website.
+  "owner_attestation",
   // Legacy NYC-specific values, still accepted.
   "nys_dos_corporations",
   "eater_ny",
@@ -37,6 +39,7 @@ export const SOURCE_TYPE_LABELS: Record<OwnershipSourceType, string> = {
   state_business_registry: "State business registry",
   local_press: "Local press",
   community_consensus: "Community consensus",
+  owner_attestation: "Owner confirmation",
   nys_dos_corporations: "NYS DOS corporations (legacy)",
   eater_ny: "Eater NY (legacy)",
 };

@@ -19,7 +19,7 @@ export function normalize_business_name(name: string): string {
     .replace(/[̀-ͯ]/g, "")
     .toUpperCase()
     .replace(/&/g, " AND ")
-    .replace(/['’`]/g, "")
+    .replace(/['‘’`]/g, "")
     .replace(/[^A-Z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");

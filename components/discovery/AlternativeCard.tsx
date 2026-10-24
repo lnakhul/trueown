@@ -38,6 +38,12 @@ export default function AlternativeCard({ alternative, is_active, on_activate }:
         <p className="truncate text-xs text-zinc-500">
           {[alternative.address, alternative.neighborhood].filter(Boolean).join(" · ")}
         </p>
+        <a
+          href={`/claim?location=${alternative.location_id}`}
+          className="inline-flex min-h-11 items-center text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-2 hover:text-zinc-200"
+        >
+          Own this business? Claim it
+        </a>
       </div>
       <a
         href={build_directions_url(alternative)}

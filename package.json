@@ -29,7 +29,8 @@
     "db:import:markets": "tsx scripts/import-markets.ts",
     "admin:grant": "tsx scripts/grant-admin.ts",
     "db:geocode:venues": "tsx scripts/geocode-venues.ts",
-    "db:import:storefronts": "tsx scripts/import-storefronts.ts"
+    "db:import:storefronts": "tsx scripts/import-storefronts.ts",
+    "db:match:registry": "tsx scripts/match-registry.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^11.8.0",

@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 const VIEWS: StorefrontQueueView[] = ["chains", "possible", "independents", "rejected"];
 
-export default async function AdminStorefrontsPage({ searchParams }: { searchParams: { view?: string; q?: string } }) {
+export default async function AdminStorefrontsPage({ searchParams }: { searchParams: { view?: string; q?: string; sort?: string } }) {
   const authorization = await resolve_request_admin();
   if (!authorization.ok) {
     if (authorization.status === 401) redirect("/admin/login");
@@ -31,7 +31,9 @@ export default async function AdminStorefrontsPage({ searchParams }: { searchPar
   let queue: StorefrontQueue | null = null;
   let load_error: string | null = null;
   try {
-    queue = await fetch_storefront_queue(admin, "nyc", search || null);
+    queue = await fetch_storefront_queue(admin, "nyc", search || null, undefined, {
+      independent_sort: searchParams.sort === "registry" ? "registry" : "size",
+    });
   } catch (caught_error) {
     report_error("[admin/storefronts] failed to load", caught_error);
     load_error = "Unable to load the storefront queue. Has migration 08 been applied to this database?";
@@ -53,7 +55,7 @@ export default async function AdminStorefrontsPage({ searchParams }: { searchPar
           {load_error}
         </p>
       ) : (
-        <AdminStorefrontQueue queue={queue} view={view} search={search} />
+        <AdminStorefrontQueue queue={queue} view={view} search={search} sort={searchParams.sort === "registry" ? "registry" : "size"} />
       )}
     </main>
   );
