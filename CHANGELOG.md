@@ -4,7 +4,29 @@ All notable changes are documented here. The format follows [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added
+- **Ownership-change alerts.**
+  - `npm run db:watch:ownership` checks every brand on the map against:
+    - worldwide news, via the GDELT open news index;
+    - SEC EDGAR filings: a brand's own Form D fundraise, merger and tender-offer documents, IPO registrations.
+  - It keeps only items that name the brand next to an acquisition, investment or public-offering signal. Each is rated Strong, Likely or Possible:
+    - An independent being bought or funded rates highest.
+    - New funding for a brand already listed as VC-funded rates lower.
+    - So does a headline that names the listed owner.
+  - News often drops a generic last word ("Blank Street" for Blank Street Coffee), and that still matches.
+  - Nothing on a listing changes automatically.
+- Admin **Alerts** page (`/admin/alerts`): possible changes grouped by brand, next to the current listing and its evidence. For each alert:
+  - **Update listing** opens the correction form already filled in: an independent that was bought becomes Tier 1, one that took investment becomes Tier 2, and the article becomes the evidence. Saving updates the listing and closes the alert in one audited step.
+  - **Use as fresh evidence** keeps the claim and makes the article its current source.
+  - **Dismiss** records a reason. A dismissed story never comes back, even when other outlets republish it under a new link.
+- Weekly **Ownership watch** GitHub Action (Mondays). It needs the `WATCH_DATABASE_URL` and `OWNERSHIP_WATCH_CONTACT` secrets and does nothing without them. Runs resume where they stopped, and later runs only look at what's new.
+- Migration `20261101000000_12_ownership_alerts.sql`:
+  - `ownership_alerts` (admin-only read);
+  - `ownership_watch_state` (CLI only);
+  - the audited, admin-only `resolve_ownership_alert()`.
+
 ### Changed
+- The Brands page's re-verify and correction forms are now shared with the Alerts page (`components/AdminBrandForms.tsx`). They behave the same as before.
 - **Search-first home screen:** the long list of neighborhood chips is gone. The page now opens on a pinned search bar with a "use my location" button, and a full-width map below it. The map shows you (a blue dot), every corporate-backed spot nearby (amber) and every independent (green). Tapping a spot on the map or in the list opens its details. The app still asks for location on load. If location is off, the map rests on New York with a short note, "Try again", and a prompt to search.
 - Search panel: "Use my current location", your last five searches (kept only in your browser, and clearable), and six popular neighborhoods. While typing, it shows matching neighborhoods plus a free-text search for any address.
 - Business type and city filters are now compact pills under the search.

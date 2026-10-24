@@ -26,6 +26,7 @@ The schema is built to extend beyond coffee into restaurants, bars and retail, a
 - Public "How we classify" page and a "Report an error" flow for business owners, with an admin inbox
 - Storefront review queue fed by NYC Open Data: approve a chain's locations in one click, publish independents with evidence (NY State registry leads)
 - "Claim your business" for independent owners, with an admin inbox
+- Weekly ownership-change watch: news (GDELT) and SEC filings that name a tracked brand next to an acquisition, investment or IPO go to an admin Alerts queue; one click updates the listing with the article as evidence
 - Row-level security on every table; provenance fields on brand ownership claims
 - Bulk CSV importers for brands, venues and neighborhood boundaries
 
@@ -84,6 +85,7 @@ npm run db:import:boundaries                       # NYC NTA 2020 polygons (--ma
 npm run db:import:brands -- <brands.csv>           # brand-level rows
 npm run db:import:storefronts                      # NYC coffee/bakery shops from NYC Open Data -> admin review queue
 npm run db:match:registry                          # NY State registry leads for possible independents
+npm run db:watch:ownership                         # news + SEC filings -> admin Alerts (needs OWNERSHIP_WATCH_CONTACT)
 npm run db:geocode:venues -- <venues.csv>          # fill blank coordinates from addresses (review the output)
 npm run db:import:venues -- <venues.csv>           # brands + storefronts with provenance
 ```
@@ -122,7 +124,7 @@ Security headers, RLS, server-side Turnstile verification, rate limiting and par
 
 ## Data sources and accuracy
 
-Ownership claims are hand-curated and cited: Tier 1/2 from SEC EDGAR, investor press releases and business-intelligence platforms; Tier 3 from NYS Division of Corporations, Eater NY and community consensus. Ownership changes; if something is wrong, submit a tip with evidence. Neighborhood boundaries come from NYC Open Data (Department of City Planning, NTA 2020).
+Ownership claims are hand-curated and cited: Tier 1/2 from SEC EDGAR, investor press releases and business-intelligence platforms; Tier 3 from NYS Division of Corporations, Eater NY and community consensus. Ownership changes: a weekly watch of news (GDELT) and SEC EDGAR filings flags possible changes for review, and if something is wrong you can submit a tip with evidence. Neighborhood boundaries come from NYC Open Data (Department of City Planning, NTA 2020).
 
 ## Contributing
 
